@@ -22,7 +22,7 @@ class GameAgent:
         empty = []
         for i in range(len(board)):
             for j in range(len(board[i])):
-                if board[i][j] is None:
+                if board[i][j] == '':
                     empty.append((i,j))
         return empty
 
@@ -30,37 +30,28 @@ class GameAgent:
     def check_winner(self, board):
 
         for i in range(len(board)):
-            if board[i][0] is not None and board[i][0] == board[i][1] == board[i][2]:
+            if board[i][0] != '' and board[i][0] == board[i][1] == board[i][2]:
                 return board[i][0]
         for i in range(len(board)):
-            if board[0][i] is not None and board[0][i] == board[1][i] == board[2][i]:
+            if board[0][i] != '' and board[0][i] == board[1][i] == board[2][i]:
                 return board[0][i]
         
         #diagonals
-        if board[0][0] is not None and board[0][0] == board[1][1] == board[2][2]:
+        if board[0][0] != '' and board[0][0] == board[1][1] == board[2][2]:
             return board[0][0]
-        if board[0][2] is not None and board[0][2] == board[1][1] == board[2][0]:
+        if board[0][2] != '' and board[0][2] == board[1][1] == board[2][0]:
             return board[0][2]
 
 
         return None
 
-
-
-    #return opponent token
-    def get_opponent(self, board):
-        for row in board:
-            for cell in row:
-                if cell is not None and cell != self._token:
-                    return cell
-        return None
     
     #im going to use minimax here along with previous helper functins to find a winner
     #assuming optimal play
-    def minimax(self, board, is_maximizing):
+    def minimax(self, board, is_maximizing, opp_token):
         winner = self.check_winner(board)
         if winner is not None:
-            if winner == self._token:
+            if winner == self._token.value():
                 return 10
             else:
                 return -10
@@ -73,9 +64,9 @@ class GameAgent:
         if is_maximizing:
             best = float('-inf')
             for (row, col) in empty:
-                board[row][col] = self._token
-                score = self.minimax(board, not is_maximizing)
-                board[row][col] = None  
+                board[row][col] = self._token.value()
+                score = self.minimax(board, not is_maximizing, opp_token)
+                board[row][col] = ''  
                 best = max(best, score)
             return best
         
@@ -83,9 +74,9 @@ class GameAgent:
         else:
             best = float('inf')
             for (row, col) in empty:
-                board[row][col] = self.get_opponent(board)
-                score = self.minimax(board, not is_maximizing)
-                board[row][col] = None
+                board[row][col] = opp_token.value()
+                score = self.minimax(board, not is_maximizing, opp_token)
+                board[row][col] = ''
                 best = min(best, score)
             return best
 
@@ -145,6 +136,13 @@ class GameAgent:
         if game.get_type() != Type.TIC_TAC_TOE:
             return -1
 
+        if self._token == game.player1_token():
+            opp_token = game.player2_token()
+        else:
+            opp_token = game.player1_token()
+
+       # print(type(self._token), self._token)
+
         board = game.get_board()
 
         empty = self.get_empty_cells(board)
@@ -153,12 +151,18 @@ class GameAgent:
         best_score, best_move = float('-inf'), None
 
         for i, j in empty:
-            board[i][j] = self._token
+            board[i][j] = self._token.value()
             #False bc its oppponents turn now
-            score = self.minimax(board, False)
+            score = self.minimax(board, False, opp_token)
             if score > best_score:
                 best_score = score
                 best_move = (i, j)
-            board[i][j] = None
+            board[i][j] = ''
         
+
+        #print("empty cells:", empty)
+       # print("best_move:", best_move)
+       # print("best_score:", best_score)
+       # print("board:", board)
+
         return best_move

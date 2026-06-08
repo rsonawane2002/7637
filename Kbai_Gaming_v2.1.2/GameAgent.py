@@ -26,8 +26,24 @@ class GameAgent:
                     empty.append((i,j))
         return empty
 
+    #check rows/cols/diags for 4 in a row
     def check_winner(self, board):
+
+        for i in range(len(board)):
+            if board[i][0] is not None and board[i][0] == board[i][1] == board[i][2]:
+                return board[i][0]
+        for i in range(len(board)):
+            if board[0][i] is not None and board[0][i] == board[1][i] == board[2][i]:
+                return board[0][i]
         
+        #diagonals
+        if board[0][0] is not None and board[0][0] == board[1][1] == board[2][2]:
+            return board[0][0]
+        if board[0][2] is not None and board[0][2] == board[1][1] == board[2][0]:
+            return board[0][2]
+
+
+        return None
 
     def make_move(self, game: Game) -> Tuple[int, int] | int:
         """

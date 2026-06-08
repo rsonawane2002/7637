@@ -45,6 +45,50 @@ class GameAgent:
 
         return None
 
+
+
+    #return opponent token
+    def get_opponent(self, board):
+        for row in board:
+            for cell in row:
+                if cell is not None and cell != self._token:
+                    return cell
+        return None
+    
+    #im going to use minimax here along with previous helper functins to find a winner
+    #assuming optimal play
+    def minimax(self, board, is_maximizing):
+        winner = self.check_winner(board)
+        if winner is not None:
+            if winner == self._token:
+                return 10
+            else:
+                return -10
+
+        empty = self.get_empty_cells(board)
+        if len(empty) == 0:
+            return 0  # draw
+
+        #our turn
+        if is_maximizing:
+            best = float('-inf')
+            for (row, col) in empty:
+                board[row][col] = self._token
+                score = self.minimax(board, not is_maximizing)
+                board[row][col] = None  
+                best = max(best, score)
+            return best
+        
+        #opponent
+        else:
+            best = float('inf')
+            for (row, col) in empty:
+                board[row][col] = self.get_opponent(board)
+                score = self.minimax(board, not is_maximizing)
+                board[row][col] = None
+                best = min(best, score)
+            return best
+
     def make_move(self, game: Game) -> Tuple[int, int] | int:
         """
         This is the main driver of the agent. The game controller will call this with an updated game object
@@ -89,4 +133,32 @@ class GameAgent:
 
         Write your code starting here.
         """
-        return (-1, -1) if game.get_type() == Type.TIC_TAC_TOE else -1
+        
+
+        #my algorithm
+        # 1) get board and list of empty cells
+        # 2) loop over empty cells and for each one make a move + call minimax
+        # 3) track score from that move, and at the end find highest scoring move and return
+
+
+        #for now deal with just tic tac toe
+        if game.get_type() != Type.TIC_TAC_TOE:
+            return -1
+
+        board = game.get_board()
+
+        empty = self.get_empty_cells(board)
+
+
+        best_score, best_move = float('-inf'), None
+
+        for i, j in empty:
+            board[i][j] = self._token
+            #False bc its oppponents turn now
+            score = self.minimax(board, False)
+            if score > best_score:
+                best_score = score
+                best_move = (i, j)
+            board[i][j] = None
+        
+        return best_move

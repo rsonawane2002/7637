@@ -227,7 +227,7 @@ class ArcAgent:
             output_grid = pair.get_output_data().data()
             result = transform(input_grid)
 
-            if result.shape != output_grid.shape:we
+            if result.shape != output_grid.shape:
                 return  False
             if not np.array_equal(result, output_grid):
                 return False

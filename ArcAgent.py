@@ -24,7 +24,9 @@ class ArcAgent:
         ]
     
 
-    #Given a non zero pixel, expand a 3x3 box around it.
+    #Given a non zero pixel, expand a 3x3 box around it. So basically
+    #turn any individual nonzero pixel into a 3x3 pixel with same color/attributes
+    # as the original, bounded by grid size obviously
     def try_block_expand(self, training, test_input):
         
         for pair in training:
@@ -83,7 +85,8 @@ class ArcAgent:
         
         return result
 
-    #Find a non black or nonzero pixel, draw diagonals from it
+    #Find a non black or nonzero pixel, draw diagonals from it that extend outward
+    #in all four directions (diagonals). 
     def try_x_pattern(self, training, test_input):
         for pair in training:
             in_grid = pair.get_input_data().data()
@@ -187,7 +190,7 @@ class ArcAgent:
                         # then its an inconsistent transform so we return
                         existing = mapping[in_val]
                         if existing != out_val:
-                            print('conflict:', in_val, '->', existing, 'vs', out_val)
+                            #print('conflict:', in_val, '->', existing, 'vs', out_val)
                             return None
         
         # if it maps to itself then its no transform so return
@@ -224,12 +227,16 @@ class ArcAgent:
             output_grid = pair.get_output_data().data()
             result = transform(input_grid)
 
-            if result.shape != output_grid.shape:
+            if result.shape != output_grid.shape:we
                 return  False
             if not np.array_equal(result, output_grid):
                 return False
         return True
 
+    # pattern: input has a shape or cluster of nonzero pixels floating in a sea of zeros.
+    # output is just that shape cropped out with the zero padding stripped away.
+    # find the first and last row/col that contain any nonzero value, then slice
+    # the grid between those boundaries to extract just the shape itself.
     def try_bounding_box(self, test_input):
         # find any rows or cols with non zero value
         rows_with_nonzero = np.any(test_input != 0, axis=1)
@@ -253,8 +260,81 @@ class ArcAgent:
         cropped = test_input[first_row:last_row+1, first_col:last_col+1]
         
         return cropped
+    
 
+    #pattern: input is just one row with some nonzero cells. Output grid rows = input cols // 2, output grid cols = input cols.
+    #first row of output grid is same number of nonzero cells in input grid (so the input row essentially). fill out the rest
+    # of the output grid row by row, appending one more nonzero cell of the same color to the n+1th index, creating a staircase type
+    #formation. So if we have 3 nonzero and 5 zero in first row, we then have 4 nonzero and 4 zero in second, 5 nonzero and 3 zero in third,
+    # etc til we fill out output grid
+    def try_staircase(self, training, test_input):
+        for pair in training:
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+            
+            # input has to be exactly one row
+            if in_grid.shape[0] != 1:
+                return None
+            
+            num_cols = in_grid.shape[1]
+            
+            # count nonzero cells and then find the color (assuming same color throughout input)
+            nonzero_count = 0
+            color = 0
+            for c in range(num_cols):
+                if in_grid[0][c] != 0:
+                    nonzero_count = nonzero_count + 1
+                    color = in_grid[0][c]
+        
+            
+            if nonzero_count == 0:
+                return None
+            
+            # define output rows as input rows // 2
+            num_output_rows = num_cols // 2
 
+                           
+           # print('num_cols:', num_cols, 'nonzero_count:', nonzero_count, 'actual:', out_grid.shape[0], 'last row filled:', np.count_nonzero(out_grid[-1]))
+            
+            # build expected output row by row
+            expected = np.zeros((num_output_rows, num_cols), dtype=in_grid.dtype)
+            for r in range(num_output_rows):
+                #staircase so increment 1 per row to form staircase til we run out of space
+                fill_up_to = nonzero_count + r
+                for c in range(fill_up_to):
+                    expected[r][c] = color
+            
+            if not np.array_equal(expected, out_grid):
+                return None
+
+        # apply to test input
+        if test_input.shape[0] != 1:
+            return None
+            
+        num_cols = test_input.shape[1]
+            
+        nonzero_count = 0
+        color = 0
+        for c in range(num_cols):
+            if test_input[0][c] != 0:
+                nonzero_count = nonzero_count + 1
+                color = test_input[0][c]
+            
+        if nonzero_count == 0:
+            return None
+            
+        num_output_rows = num_cols // 2
+        result = np.zeros((num_output_rows, num_cols), dtype=test_input.dtype)
+            
+        for r in range(num_output_rows):
+            fill_up_to = nonzero_count + r
+            for c in range(fill_up_to):
+                result[r][c] = color
+
+        return result
+        
+
+    #consolidate color substitution + mapping into one function for simplicity
     def try_color_substitution_and_apply(self, training, test_input):
         mapping = self.try_color_substitution(training)
         if mapping is None:
@@ -296,7 +376,7 @@ class ArcAgent:
             self.try_color_substitution_and_apply(training, test_input),
             self.try_x_pattern(training, test_input),
             self.try_block_expand(training, test_input),
-            #self.try_staircase(training, test_input),
+            self.try_staircase(training, test_input),
             self.try_bounding_box(test_input),
         ]
 

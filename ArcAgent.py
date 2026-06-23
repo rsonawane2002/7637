@@ -332,9 +332,61 @@ class ArcAgent:
                 result[r][c] = color
 
         return result
-        
+    
+    # pattern: input is NxM, output is 2Nx2M, so 4 quadrants of the original. the input is split into 4 quadrants.
+    # top left = original as is
+    # top right = fliplr (flip left right, mirror across vertical axis, cols reverse) so flip across y basically
+    # bottom left = flipud (flip up down, mirror across horizontal axis, rows reverse) so flip across x basically
+    # bottom right = rot90 twice = 180 degrees = both fliplr and flipud combined, so essentially flip across x and then y.
+    # np.hstack joins arrays side by side (left to right) to form each row of quadrants
+    # np.vstack joins arrays top to bottom to combine top row and bottom row
+    def try_mirror_tile(self, training, test_input):
+        for pair in training:
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+            
+            # output must be exactly double input in both dimensions
+            if out_grid.shape[0] != in_grid.shape[0] * 2:
+                return None
+            if out_grid.shape[1] != in_grid.shape[1] * 2:
+                return None
+            
+            # top left quadrant = original
+            top_left = in_grid
 
-    #consolidate color substitution + mapping into one function for simplicity
+            # top right quadrant: mirror left right across y axis (cols reverse, rows same)
+            top_right = np.fliplr(in_grid)
+
+            # bottom left quadrant: mirror up down across x axis (rows reverse, cols same)
+            bottom_left = np.flipud(in_grid)
+
+            # bottom right quadrant: both flips combined = rotate 180, flipping across x + y.
+            bottom_right = np.rot90(in_grid, 2)
+
+            # first join left and right quadrants side by side for each row
+            top_row = np.hstack([top_left, top_right])
+            bottom_row = np.hstack([bottom_left, bottom_right])
+
+            # join both on top of each other to combine all 4 quadrants
+            expected = np.vstack([top_row, bottom_row])
+            
+            if not np.array_equal(expected, out_grid):
+                return None
+        
+        # apply same logic above to form quadrants combine + return
+        top_left = test_input
+        top_right = np.fliplr(test_input)
+        bottom_left = np.flipud(test_input)
+        bottom_right = np.rot90(test_input, 2)
+
+        top_row = np.hstack([top_left, top_right])
+        bottom_row = np.hstack([bottom_left, bottom_right])
+
+        result = np.vstack([top_row, bottom_row])
+        
+        return result
+
+    #consolidate color
     def try_color_substitution_and_apply(self, training, test_input):
         mapping = self.try_color_substitution(training)
         if mapping is None:
@@ -377,6 +429,7 @@ class ArcAgent:
             self.try_x_pattern(training, test_input),
             self.try_block_expand(training, test_input),
             self.try_staircase(training, test_input),
+            self.try_mirror_tile(training, test_input),
             self.try_bounding_box(test_input),
         ]
 

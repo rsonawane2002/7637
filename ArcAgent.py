@@ -386,6 +386,60 @@ class ArcAgent:
         
         return result
 
+    # pattern: each row has at most two nonzero pixels, one on the left and one on the right.
+    # if both those pixels are the same color, fill the entire row with that color.
+    # if they are different colors, leave the row the same. so iterate by elem per row, find
+    # two nonzero ones, if they match replace that row with row filled with those nonzero pixels.
+    def try_fill_matching_border(self, training, test_input):
+        for pair in training:
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+            
+            if in_grid.shape != out_grid.shape:
+                return None
+            
+            rows = in_grid.shape[0]
+            cols = in_grid.shape[1]
+            
+            # same size output as inpuit
+            expected = np.zeros_like(in_grid)
+            
+            for r in range(rows):
+                left_color = in_grid[r][0]
+                right_color = in_grid[r][cols - 1]
+                
+                # if both pixels match and are nonzero then fill entire row
+                if left_color != 0 and left_color == right_color:
+                    for c in range(cols):
+                        expected[r][c] = left_color
+                else:
+                    # otherwise just copy the row as is 
+                    for c in range(cols):
+                        expected[r][c] = in_grid[r][c]
+            
+            if not np.array_equal(expected, out_grid):
+                return None
+            # apply to test input
+        rows = test_input.shape[0]
+        cols = test_input.shape[1]
+        result = np.zeros_like(test_input)
+        
+        for r in range(rows):
+            left_color = test_input[r][0]
+            right_color = test_input[r][cols - 1]
+            
+            if left_color != 0 and left_color == right_color:
+                for c in range(cols):
+                    result[r][c] = left_color
+            else:
+                for c in range(cols):
+                    result[r][c] = test_input[r][c]
+        
+        return result
+    
+
+
+
     #consolidate color
     def try_color_substitution_and_apply(self, training, test_input):
         mapping = self.try_color_substitution(training)
@@ -431,6 +485,7 @@ class ArcAgent:
             self.try_staircase(training, test_input),
             self.try_mirror_tile(training, test_input),
             self.try_bounding_box(test_input),
+            self.try_fill_matching_border(training, test_input)
         ]
 
         for result in transform_attempts:

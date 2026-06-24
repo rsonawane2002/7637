@@ -391,6 +391,9 @@ class ArcAgent:
     # if they are different colors, leave the row the same. so iterate by elem per row, find
     # two nonzero ones, if they match replace that row with row filled with those nonzero pixels.
     def try_fill_matching_border(self, training, test_input):
+
+        
+
         for pair in training:
             in_grid = pair.get_input_data().data()
             out_grid = pair.get_output_data().data()
@@ -400,6 +403,13 @@ class ArcAgent:
             
             rows = in_grid.shape[0]
             cols = in_grid.shape[1]
+
+            # this transform only applies if all nonzero values are on the left or right border
+            # if any nonzero value is in the middle columns, this is not our transform
+            for r in range(rows):
+                for c in range(1, cols - 1):
+                    if in_grid[r][c] != 0:
+                        return None
             
             # same size output as inpuit
             expected = np.zeros_like(in_grid)
@@ -418,7 +428,10 @@ class ArcAgent:
                         expected[r][c] = in_grid[r][c]
             
             if not np.array_equal(expected, out_grid):
-                return None
+                    print('failed on row mismatch')
+                    print('expected:', expected)
+                    print('out_grid:', out_grid)
+                    return None
             # apply to test input
         rows = test_input.shape[0]
         cols = test_input.shape[1]
@@ -484,8 +497,8 @@ class ArcAgent:
             self.try_block_expand(training, test_input),
             self.try_staircase(training, test_input),
             self.try_mirror_tile(training, test_input),
+            self.try_fill_matching_border(training, test_input),
             self.try_bounding_box(test_input),
-            self.try_fill_matching_border(training, test_input)
         ]
 
         for result in transform_attempts:

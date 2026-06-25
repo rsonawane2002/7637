@@ -447,14 +447,98 @@ class ArcAgent:
         
         return result
     
+    # helper function: find a separator at exact midpoint of grid that splts
+    # it into two equal halves (in terms of dimension). could be col wise or row wise
+    # returns (separator_row, separator_col), either can be -1 if not found
+    def find_separator(self, grid):
+        rows = grid.shape[0]
+        cols = grid.shape[1]
+        separator_row = -1
+        separator_col = -1
+        
+        #has to be odd rows to have midpoint. search for row midpoint
+        #first, that entire midpoint row has to be the same value + nonzero
+        #to be separator. if not then we move to col and check the same thing
+        if rows % 2 == 1:
+            mid = rows // 2
+            first_val = grid[mid][0]
+            if first_val != 0:
+                is_sep = True
+                for c in range(cols):
+                    if grid[mid][c] != first_val:
+                        is_sep = False
+                        break
+                if is_sep:
+                    separator_row = mid
+        
+        if separator_row == -1 and cols % 2 == 1:
+            mid = cols // 2
+            first_val = grid[0][mid]
+            if first_val != 0:
+                is_sep = True
+                for r in range(rows):
+                    if grid[r][mid] != first_val:
+                        is_sep = False
+                        break
+                if is_sep:
+                    separator_col = mid
+        
+        return separator_row, separator_col
+
+
+    # helper: given two boolean values and an operation name, return the result.
+    # allows for robust checking of all logic gates and simplifies stuff.
+    def apply_op(self, a_nonzero, b_nonzero, op):
+        if op == 'OR':
+            return a_nonzero or b_nonzero
+        elif op == 'AND':
+            return a_nonzero and b_nonzero
+        elif op == 'XOR':
+            return a_nonzero != b_nonzero
+        elif op == 'NOR':
+            return not a_nonzero and not b_nonzero
+        return False
+
+
+    # helper: build result grid by applying op between two panels that were split in half equally.
+    # preserve_colors mode keeps original pixel values instead of recoloring to output_color. 
+    # this is in the case that output color has multiple colors like e918
+    def build_panel_result(self, panel_a, panel_b, op, preserve_colors, output_color):
+        panel_rows = panel_a.shape[0]
+        panel_cols = panel_a.shape[1]
+        result = np.zeros((panel_rows, panel_cols), dtype=panel_a.dtype)
+        
+        for r in range(panel_rows):
+            for c in range(panel_cols):
+                a_val = panel_a[r][c]
+                b_val = panel_b[r][c]
+                a_nonzero = a_val != 0
+                b_nonzero = b_val != 0
+                
+                if self.apply_op(a_nonzero, b_nonzero, op):
+                    if preserve_colors:
+                        if a_nonzero:
+                            result[r][c] = a_val
+                        else:
+                            result[r][c] = b_val
+                    else:
+                        result[r][c] = output_color
+        
+        return result
+    
 
     # pattern: grid is split exactly in half by a separator row or column of repeated values.
-    #  find the midpoint of the grid, check if that row/col is valid separator
-    # (all same nonzero value in a row or col basically that splits grid into two equal halves), 
-    #  then split into two equal panels and try OR/AND/XOR/NOR. 
-    # logic between them. output color is fi from training output.
-    # this generalizes across problems with different separator colors and boolean operations.
+    # we find the midpoint of the grid, check if that row/col is a valid separator
+    # (all same nonzero value), then split into two equal panels and try OR/AND/XOR/NOR
+    # logic between them. two modes: single output color (recolor to one color) or
+    # preserve original colors from whichever panel had the nonzero value.
+    # output color is inferred from training output. generalizes across problems
+    # with different separator colors, output colors, and boolean operations.
     def try_separator_overlay(self, training, test_input):
+        
+        matched_op = None
+        preserve_colors = False
+        output_color = 0
         
         for pair in training:
             in_grid = pair.get_input_data().data()
@@ -463,58 +547,31 @@ class ArcAgent:
             rows = in_grid.shape[0]
             cols = in_grid.shape[1]
             
-            # separator has to be exactly in the middle so grid size has to be odd
-            separator_row = -1
-            separator_col = -1
-            
-            #check for row split first, if not then chekck col
-            if rows % 2 == 1:
-                mid = rows // 2
-                first_val = in_grid[mid][0]
-                if first_val != 0:
-                    is_separator = True
-                    for c in range(cols):
-                        if in_grid[mid][c] != first_val:
-                            is_separator = False
-                            break
-                    if is_separator:
-                        separator_row = mid
-            
-            if separator_row == -1 and cols % 2 == 1:
-                mid = cols // 2
-                first_val = in_grid[0][mid]
-                if first_val != 0:
-                    is_separator = True
-                    for r in range(rows):
-                        if in_grid[r][mid] != first_val:
-                            is_separator = False
-                            break
-                    if is_separator:
-                        separator_col = mid
+            # find separator at midpoint
+            separator_row, separator_col = self.find_separator(in_grid)
             
             if separator_row == -1 and separator_col == -1:
                 return None
             
-            # split into two equal panels
+            # split into two equal halves based on separator
             if separator_row != -1:
                 panel_a = in_grid[0:separator_row, :]
                 panel_b = in_grid[separator_row + 1:, :]
                 panel_rows = separator_row
-                panel_cols = cols
             else:
                 panel_a = in_grid[:, 0:separator_col]
                 panel_b = in_grid[:, separator_col + 1:]
-                panel_rows = rows
-                panel_cols = separator_col
             
-            # output has to match panel size
-            if separator_row != -1 and out_grid.shape[0] != panel_rows:
+            # output must be same as the equally split halves or we return
+            if separator_row != -1 and out_grid.shape[0] != separator_row:
                 return None
-            if separator_col != -1 and out_grid.shape[1] != panel_cols:
+            if separator_col != -1 and out_grid.shape[1] != separator_col:
                 return None
             
-            # find output color from first nonzero in out_grid, assuming
-            # output is only one color throughout
+            # find output color from first nonzero in out_grid. 
+            # here we assume basically only one color in output.
+            # we try with one color, if faily we try to use multiple colors
+            # to preserve original coloring
             output_color = 0
             for r in range(out_grid.shape[0]):
                 for c in range(out_grid.shape[1]):
@@ -527,65 +584,28 @@ class ArcAgent:
             if output_color == 0:
                 return None
             
-            # try each boolean operation against training output, and find one that matches
-            # the training output. use that as we assume consistent op throughout the problem if it matches
+            # try each op in both modes, stop at first match
             matched_op = None
+            preserve_colors = False
             for op in ['OR', 'AND', 'XOR', 'NOR']:
-                expected = np.zeros_like(out_grid)
-                for r in range(panel_rows):
-                    for c in range(panel_cols):
-                        a_val = panel_a[r][c] != 0
-                        b_val = panel_b[r][c] != 0
-                        
-                        if op == 'OR':
-                            condition = a_val or b_val
-                        elif op == 'AND':
-                            condition = a_val and b_val
-                        elif op == 'XOR':
-                            condition = a_val != b_val
-                        elif op == 'NOR':
-                            condition = not a_val and not b_val
-                        
-                        if condition:
-                            expected[r][c] = output_color
-                
+                # mode 1: try just the same output color for all
+                expected = self.build_panel_result(panel_a, panel_b, op, False, output_color)
                 if np.array_equal(expected, out_grid):
                     matched_op = op
+                    preserve_colors = False
+                    break
+                # mode 2: try multiple output colors based on the original individual halves
+                expected2 = self.build_panel_result(panel_a, panel_b, op, True, output_color)
+                if np.array_equal(expected2, out_grid):
+                    matched_op = op
+                    preserve_colors = True
                     break
             
             if matched_op is None:
                 return None
         
-        # apply to test input using matched operation
-        rows = test_input.shape[0]
-        cols = test_input.shape[1]
-        
-        separator_row = -1
-        separator_col = -1
-        
-        if rows % 2 == 1:
-            mid = rows // 2
-            first_val = test_input[mid][0]
-            if first_val != 0:
-                is_separator = True
-                for c in range(cols):
-                    if test_input[mid][c] != first_val:
-                        is_separator = False
-                        break
-                if is_separator:
-                    separator_row = mid
-        
-        if separator_row == -1 and cols % 2 == 1:
-            mid = cols // 2
-            first_val = test_input[0][mid]
-            if first_val != 0:
-                is_separator = True
-                for r in range(rows):
-                    if test_input[r][mid] != first_val:
-                        is_separator = False
-                        break
-                if is_separator:
-                    separator_col = mid
+        # apply to test input
+        separator_row, separator_col = self.find_separator(test_input)
         
         if separator_row == -1 and separator_col == -1:
             return None
@@ -593,34 +613,11 @@ class ArcAgent:
         if separator_row != -1:
             panel_a = test_input[0:separator_row, :]
             panel_b = test_input[separator_row + 1:, :]
-            panel_rows = separator_row
-            panel_cols = cols
         else:
             panel_a = test_input[:, 0:separator_col]
             panel_b = test_input[:, separator_col + 1:]
-            panel_rows = rows
-            panel_cols = separator_col
         
-        result = np.zeros((panel_rows, panel_cols), dtype=test_input.dtype)
-        
-        for r in range(panel_rows):
-            for c in range(panel_cols):
-                a_val = panel_a[r][c] != 0
-                b_val = panel_b[r][c] != 0
-                
-                if matched_op == 'OR':
-                    condition = a_val or b_val
-                elif matched_op == 'AND':
-                    condition = a_val and b_val
-                elif matched_op == 'XOR':
-                    condition = a_val != b_val
-                elif matched_op == 'NOR':
-                    condition = not a_val and not b_val
-                
-                if condition:
-                    result[r][c] = output_color
-        
-        return result
+        return self.build_panel_result(panel_a, panel_b, matched_op, preserve_colors, output_color)
 
 
     #consolidate color

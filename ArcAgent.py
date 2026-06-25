@@ -391,9 +391,6 @@ class ArcAgent:
     # if they are different colors, leave the row the same. so iterate by elem per row, find
     # two nonzero ones, if they match replace that row with row filled with those nonzero pixels.
     def try_fill_matching_border(self, training, test_input):
-
-        
-
         for pair in training:
             in_grid = pair.get_input_data().data()
             out_grid = pair.get_output_data().data()
@@ -428,9 +425,9 @@ class ArcAgent:
                         expected[r][c] = in_grid[r][c]
             
             if not np.array_equal(expected, out_grid):
-                    print('failed on row mismatch')
-                    print('expected:', expected)
-                    print('out_grid:', out_grid)
+                    #print('failed on row mismatch')
+                    #print('expected:', expected)
+                   # print('out_grid:', out_grid)
                     return None
             # apply to test input
         rows = test_input.shape[0]
@@ -451,6 +448,179 @@ class ArcAgent:
         return result
     
 
+    # pattern: grid is split exactly in half by a separator row or column of repeated values.
+    #  find the midpoint of the grid, check if that row/col is valid separator
+    # (all same nonzero value in a row or col basically that splits grid into two equal halves), 
+    #  then split into two equal panels and try OR/AND/XOR/NOR. 
+    # logic between them. output color is fi from training output.
+    # this generalizes across problems with different separator colors and boolean operations.
+    def try_separator_overlay(self, training, test_input):
+        
+        for pair in training:
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+            
+            rows = in_grid.shape[0]
+            cols = in_grid.shape[1]
+            
+            # separator has to be exactly in the middle so grid size has to be odd
+            separator_row = -1
+            separator_col = -1
+            
+            #check for row split first, if not then chekck col
+            if rows % 2 == 1:
+                mid = rows // 2
+                first_val = in_grid[mid][0]
+                if first_val != 0:
+                    is_separator = True
+                    for c in range(cols):
+                        if in_grid[mid][c] != first_val:
+                            is_separator = False
+                            break
+                    if is_separator:
+                        separator_row = mid
+            
+            if separator_row == -1 and cols % 2 == 1:
+                mid = cols // 2
+                first_val = in_grid[0][mid]
+                if first_val != 0:
+                    is_separator = True
+                    for r in range(rows):
+                        if in_grid[r][mid] != first_val:
+                            is_separator = False
+                            break
+                    if is_separator:
+                        separator_col = mid
+            
+            if separator_row == -1 and separator_col == -1:
+                return None
+            
+            # split into two equal panels
+            if separator_row != -1:
+                panel_a = in_grid[0:separator_row, :]
+                panel_b = in_grid[separator_row + 1:, :]
+                panel_rows = separator_row
+                panel_cols = cols
+            else:
+                panel_a = in_grid[:, 0:separator_col]
+                panel_b = in_grid[:, separator_col + 1:]
+                panel_rows = rows
+                panel_cols = separator_col
+            
+            # output has to match panel size
+            if separator_row != -1 and out_grid.shape[0] != panel_rows:
+                return None
+            if separator_col != -1 and out_grid.shape[1] != panel_cols:
+                return None
+            
+            # find output color from first nonzero in out_grid, assuming
+            # output is only one color throughout
+            output_color = 0
+            for r in range(out_grid.shape[0]):
+                for c in range(out_grid.shape[1]):
+                    if out_grid[r][c] != 0:
+                        output_color = out_grid[r][c]
+                        break
+                if output_color != 0:
+                    break
+            
+            if output_color == 0:
+                return None
+            
+            # try each boolean operation against training output, and find one that matches
+            # the training output. use that as we assume consistent op throughout the problem if it matches
+            matched_op = None
+            for op in ['OR', 'AND', 'XOR', 'NOR']:
+                expected = np.zeros_like(out_grid)
+                for r in range(panel_rows):
+                    for c in range(panel_cols):
+                        a_val = panel_a[r][c] != 0
+                        b_val = panel_b[r][c] != 0
+                        
+                        if op == 'OR':
+                            condition = a_val or b_val
+                        elif op == 'AND':
+                            condition = a_val and b_val
+                        elif op == 'XOR':
+                            condition = a_val != b_val
+                        elif op == 'NOR':
+                            condition = not a_val and not b_val
+                        
+                        if condition:
+                            expected[r][c] = output_color
+                
+                if np.array_equal(expected, out_grid):
+                    matched_op = op
+                    break
+            
+            if matched_op is None:
+                return None
+        
+        # apply to test input using matched operation
+        rows = test_input.shape[0]
+        cols = test_input.shape[1]
+        
+        separator_row = -1
+        separator_col = -1
+        
+        if rows % 2 == 1:
+            mid = rows // 2
+            first_val = test_input[mid][0]
+            if first_val != 0:
+                is_separator = True
+                for c in range(cols):
+                    if test_input[mid][c] != first_val:
+                        is_separator = False
+                        break
+                if is_separator:
+                    separator_row = mid
+        
+        if separator_row == -1 and cols % 2 == 1:
+            mid = cols // 2
+            first_val = test_input[0][mid]
+            if first_val != 0:
+                is_separator = True
+                for r in range(rows):
+                    if test_input[r][mid] != first_val:
+                        is_separator = False
+                        break
+                if is_separator:
+                    separator_col = mid
+        
+        if separator_row == -1 and separator_col == -1:
+            return None
+        
+        if separator_row != -1:
+            panel_a = test_input[0:separator_row, :]
+            panel_b = test_input[separator_row + 1:, :]
+            panel_rows = separator_row
+            panel_cols = cols
+        else:
+            panel_a = test_input[:, 0:separator_col]
+            panel_b = test_input[:, separator_col + 1:]
+            panel_rows = rows
+            panel_cols = separator_col
+        
+        result = np.zeros((panel_rows, panel_cols), dtype=test_input.dtype)
+        
+        for r in range(panel_rows):
+            for c in range(panel_cols):
+                a_val = panel_a[r][c] != 0
+                b_val = panel_b[r][c] != 0
+                
+                if matched_op == 'OR':
+                    condition = a_val or b_val
+                elif matched_op == 'AND':
+                    condition = a_val and b_val
+                elif matched_op == 'XOR':
+                    condition = a_val != b_val
+                elif matched_op == 'NOR':
+                    condition = not a_val and not b_val
+                
+                if condition:
+                    result[r][c] = output_color
+        
+        return result
 
 
     #consolidate color
@@ -498,6 +668,7 @@ class ArcAgent:
             self.try_staircase(training, test_input),
             self.try_mirror_tile(training, test_input),
             self.try_fill_matching_border(training, test_input),
+            self.try_separator_overlay(training, test_input),
             self.try_bounding_box(test_input),
         ]
 

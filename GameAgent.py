@@ -112,6 +112,28 @@ class GameAgent:
 
         return None
 
+
+    def score_window(self, window, seq, opp_val):
+        my_val = self._token.value()
+        
+        my_count = 0
+        for cell in window:
+            if cell == my_val:
+                my_count +=  1
+            if cell == 0
+                empty_count += 1
+            if cell 
+        empty_count = # count empty cells in window
+        opp_count = # count opponent tokens in window
+
+        if my_count == seq:
+            return 100
+        if my_count == seq - 1 and empty_count == 1:
+            return 10
+        # add more cases here
+
+        return 0
+
     # check rows/cols/diags for 3 in a row
     def tt_check_winner(self, board):
         for i in range(len(board)):

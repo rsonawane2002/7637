@@ -144,6 +144,88 @@ class GameAgent:
 
         return 0
 
+
+    #given a board, evaluate the current score
+    #that we have by calling score window helper.
+    # we check all possible windows of size seq
+    # vertically horizontally and diagnoally.
+    def evaluate_board(self, board, seq, opp_val):
+        rows = len(board)
+        cols = len(board[0])
+        score = 0
+
+        # center column preference
+        center_col = cols // 2
+        for r in range(rows):
+            if board[r][center_col] == self._token.value():
+                score += 3
+
+        # horizontal windows
+        for r in range(rows):
+            for c in range(cols - seq + 1):
+                window = [board[r][c + i] for i in range(seq)]
+                score += self.score_window(window, seq, opp_val)
+
+        # vertical windows
+        for c in range(cols):
+            for r in range(rows - seq + 1):
+                window = [board[r + i][c] for i in range(seq)]
+                score += self.score_window(window, seq, opp_val)
+
+        # diagonal down-right
+        for r in range(rows - seq + 1):
+            for c in range(cols - seq + 1):
+                window = [board[r + i][c + i] for i in range(seq)]
+                score += self.score_window(window, seq, opp_val)
+
+        # diagonal down-left
+        for r in range(rows - seq + 1):
+            for c in range(seq - 1, cols):
+                window = [board[r + i][c - i] for i in range(seq)]
+                score += self.score_window(window, seq, opp_val)
+
+        return score
+    
+
+    def minimax_c4(self, board, depth, is_maximizing, opp_token, seq):
+        winner = self.c4_check_winner(board, seq)
+        if winner == self._token.value():
+            return 100000
+        if winner == opp_token.value():
+            return -100000
+        
+        #get the valid column indices
+        valid_cols = self.get_valid_columns(board)
+        if len(valid_cols) == 0:
+            return 0  # draw
+        
+        #return curr state of board if cant search more gamne states
+        if depth == 0:
+            return self.evaluate_board(board, seq, opp_token.value())
+
+
+        if is_maximizing:
+            best = float('-inf')
+            for col in valid_cols:
+                row = self.get_next_row(board, col)
+                board[row][col] = self._token.value()
+                score = self.minimax_c4(board, depth -1, False, opp_token, seq)  
+                board[row][col] = ''
+                best = max(best, score)
+            return best
+        else:
+            best = float('inf')
+            for col in valid_cols:
+                row = self.get_next_row(board, col)
+                board[row][col] = opp_token.value()
+                score = self.minimax_c4(board, depth - 1, True, opp_token, seq)
+                board[row][col] = ''
+                best = min(best, score)
+            return best
+
+
+
+
     # check rows/cols/diags for 3 in a row
     def tt_check_winner(self, board):
         for i in range(len(board)):
@@ -190,23 +272,34 @@ class GameAgent:
             return best
 
     def make_move(self, game: Game) -> Tuple[int, int] | int:
-        if game.get_type() != Type.TIC_TAC_TOE:
-            return -1
-
         if self._token == game.player1_token():
             opp_token = game.player2_token()
         else:
             opp_token = game.player1_token()
 
-        board = game.get_board()
-        best_score, best_move = float('-inf'), None
+        if game.get_type() == Type.TIC_TAC_TOE:
+            board = game.get_board()
+            best_score, best_move = float('-inf'), None
+            for i, j in self.get_empty_cells(board):
+                board[i][j] = self._token.value()
+                score = self.minimax(board, False, opp_token)
+                board[i][j] = ''
+                if score > best_score:
+                    best_score = score
+                    best_move = (i, j)
+            return best_move
 
-        for i, j in self.get_empty_cells(board):
-            board[i][j] = self._token.value()
-            score = self.minimax(board, False, opp_token)
-            board[i][j] = ''
-            if score > best_score:
-                best_score = score
-                best_move = (i, j)
-
-        return best_move
+        else:
+            board = game.get_board()
+            seq = game.number_of_seq_tokens_needed()
+            depth = 4
+            best_score, best_col = float('-inf'), None
+            for col in self.get_valid_columns(board):
+                row = self.get_next_row(board, col)
+                board[row][col] = self._token.value()
+                score = self.minimax_c4(board, depth - 1, False, opp_token, seq)
+                board[row][col] = ''
+                if score > best_score:
+                    best_score = score
+                    best_col = col
+            return best_col

@@ -113,24 +113,34 @@ class GameAgent:
         return None
 
 
+    #scoring function: essentially we slice a window from the board
+    # and we teach agent if we have a lot of our tokens thats good
+    #and if the opponent has a lot of their tokens its bad
     def score_window(self, window, seq, opp_val):
         my_val = self._token.value()
         
         my_count = 0
+        empty_count = 0
+        opp_count = 0
+
         for cell in window:
             if cell == my_val:
                 my_count +=  1
-            if cell == 0
+            if cell == '':
                 empty_count += 1
-            if cell 
-        empty_count = # count empty cells in window
-        opp_count = # count opponent tokens in window
+            if cell == opp_val:
+                opp_count += 1
 
         if my_count == seq:
             return 100
         if my_count == seq - 1 and empty_count == 1:
             return 10
-        # add more cases here
+        if my_count == seq - 2 and empty_count == 2:
+            return 2
+        if opp_count == seq - 1 and empty_count == 1:
+            return -50
+        if opp_count == seq:
+            return -100
 
         return 0
 

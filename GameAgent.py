@@ -35,9 +35,85 @@ class GameAgent:
         return valid
 
 
+    #given a column index, find the "lowest"
+    # empty row
+    def get_next_row(self, board, col):
+        row = len(board)
+        lowest = None
+        for i in range(row):
+            if board[i][col] == '':
+                if lowest is None:
+                    lowest=  i
+                else:
+                    lowest = max(lowest, i)
+        return lowest
+    
+    #given a board state, check if we have a winner (4 in vertical
+    # horizontal, or either diagonal)
+    def c4_check_winner(self, board, seq):
+        rows = len(board)
+        cols = len(board[0])
+
+        # horizontal
+        for r in range(rows):
+            for c in range(cols - seq + 1):
+                cell = board[r][c]
+                if cell == '':
+                    continue
+                match = True
+                for i in range(seq):
+                    if board[r][c + i] != cell:
+                        match = False
+                        break
+                if match:
+                    return cell
+
+        # vertical - fix col outer, row inner
+        for c in range(cols):
+            for r in range(rows - seq + 1):
+                cell = board[r][c]
+                if cell == '':
+                    continue
+                match = True
+                for i in range(seq):
+                    if board[r + i][c] != cell:
+                        match = False
+                        break
+                if match:
+                    return cell
+
+        # diagonal down-right
+        for r in range(rows - seq + 1):
+            for c in range(cols - seq + 1):
+                cell = board[r][c]
+                if cell == '':
+                    continue
+                match = True
+                for i in range(seq):
+                    if board[r + i][c + i] != cell:
+                        match = False
+                        break
+                if match:
+                    return cell
+
+        # diagonal down-left
+        for r in range(rows - seq + 1):
+            for c in range(seq - 1, cols):
+                cell = board[r][c]
+                if cell == '':
+                    continue
+                match = True
+                for i in range(seq):
+                    if board[r + i][c - i] != cell:
+                        match = False
+                        break
+                if match:
+                    return cell
+
+        return None
 
     # check rows/cols/diags for 3 in a row
-    def check_winner(self, board):
+    def tt_check_winner(self, board):
         for i in range(len(board)):
             if board[i][0] != '' and board[i][0] == board[i][1] == board[i][2]:
                 return board[i][0]
@@ -58,7 +134,7 @@ class GameAgent:
 
     # minimax for TTT
     def minimax(self, board, is_maximizing, opp_token):
-        winner = self.check_winner(board)
+        winner = self.tt_check_winner(board)
         if winner is not None:
             return 10 if winner == self._token.value() else -10
         empty = self.get_empty_cells(board)

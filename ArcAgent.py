@@ -1974,6 +1974,323 @@ class ArcAgent:
 
         return self.compute_color_frequency_bars(test_input)
 
+    # this one's for problems where 4 lonely single-pixel "marker" dots
+    # sit at the exact corners of an invisible rectangle, and theres a
+    # shape of a different color living somewhere inside that rectangle.
+    # the crop we want is the INTERIOR of that rectangle (one step in
+    # from each corner, not counting the corner row/col itself), and we
+    # repaint the shape using the marker color instead of its own color
+    def compute_crop_shape_recolor_by_marker(self, grid):
+        components = self.get_connected_components(grid)
+
+        if len(components) == 0:
+            return None
+
+        # bucket every component by color again, same deal as before
+        components_by_color = {}
+        for component in components:
+            color = component['color']
+            if color not in components_by_color:
+                components_by_color[color] = []
+            components_by_color[color].append(component)
+
+        # the marker color needs to form EXACTLY 4 components, and every
+        # single one of them needs to be just 1 cell (four lonely dots).
+        # walk through each color and check for that specific pattern
+        marker_color = 0
+        marker_positions = []
+        for color in components_by_color:
+            blob_list = components_by_color[color]
+            if len(blob_list) == 4:
+                all_single_cells = True
+                for blob in blob_list:
+                    if len(blob['cells']) != 1:
+                        all_single_cells = False
+                if all_single_cells:
+                    marker_color = color
+                    for blob in blob_list:
+                        marker_positions.append(blob['cells'][0])
+
+        if marker_color == 0:
+            return None
+
+        # shape color is just whatever the other nonzero color is
+        shape_color = 0
+        for color in components_by_color:
+            if color != marker_color:
+                shape_color = color
+
+        if shape_color == 0:
+            return None
+
+        # find the min/max row and col across our 4 marker dots, this
+        # gives us the rectangle they're sitting at the corners of
+        frame_min_row = marker_positions[0][0]
+        frame_max_row = marker_positions[0][0]
+        frame_min_col = marker_positions[0][1]
+        frame_max_col = marker_positions[0][1]
+        for position in marker_positions:
+            pos_row = position[0]
+            pos_col = position[1]
+            if pos_row < frame_min_row:
+                frame_min_row = pos_row
+            if pos_row > frame_max_row:
+                frame_max_row = pos_row
+            if pos_col < frame_min_col:
+                frame_min_col = pos_col
+            if pos_col > frame_max_col:
+                frame_max_col = pos_col
+
+        # double check the 4 dots are actually sitting at real corners
+        # and not just scattered randomly, if the rectangle is too small
+        # to even have an interior this rule doesn't apply either
+        if frame_max_row - frame_min_row < 2:
+            return None
+        if frame_max_col - frame_min_col < 2:
+            return None
+
+        # the crop we actually want is the INTERIOR of that rectangle,
+        # one step in from each corner row/col, not including the
+        # corners themselves
+        interior_min_row = frame_min_row + 1
+        interior_max_row = frame_max_row - 1
+        interior_min_col = frame_min_col + 1
+        interior_max_col = frame_max_col - 1
+
+        box_height = interior_max_row - interior_min_row + 1
+        box_width = interior_max_col - interior_min_col + 1
+
+        # build the crop by hand, plain python the whole way. wherever
+        # we see the shape's original color inside the interior, paint
+        # the marker color there instead. everything else stays 0
+        result = []
+        for r in range(box_height):
+            result_row = []
+            for c in range(box_width):
+                grid_r = interior_min_row + r
+                grid_c = interior_min_col + c
+                if grid[grid_r][grid_c] == shape_color:
+                    result_row.append(marker_color)
+                else:
+                    result_row.append(0)
+            result.append(result_row)
+
+        return np.array(result)
+
+    # wrapper: checks the frame interior crop logic against every
+    # training pair first, only trusts it enough to run on the real test
+    # grid once every single pair lines up exactly
+    def try_crop_shape_recolor_by_marker(self, training, test_input):
+        for pair in training:
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+
+            expected = self.compute_crop_shape_recolor_by_marker(in_grid)
+            if expected is None:
+                return None
+            if expected.shape != out_grid.shape:
+                return None
+            if not np.array_equal(expected, out_grid):
+                return None
+
+        return self.compute_crop_shape_recolor_by_marker(test_input)
+
+    # for problems where a shape has one single cell inside it
+    # swapped out for a different marker color, kinda like a
+    # arrow poking into the shape telling us which way to shoot. we find
+    # that marker cell, figure out which direction points from the
+    # marker through the thickest part of the shape, then walk that
+    # direction starting at the marker: hop over any shape colored cells
+    # we bump into (thats us tunneling through the shape's body), and
+    # once we pop out the other side into open background we start
+    # filling marker color all the way out til we hit the edge of the
+    # grid, like a laser beam shooting through and past the shape
+    def compute_marker_ray_cast(self, grid):
+        grid_rows = len(grid)
+        grid_cols = len(grid[0])
+
+        color_counts = {}
+        color_positions = {}
+        for r in range(grid_rows):
+            for c in range(grid_cols):
+                val = grid[r][c]
+                if val == 0:
+                    continue
+                if val not in color_counts:
+                    color_counts[val] = 0
+                    color_positions[val] = []
+                color_counts[val] = color_counts[val] + 1
+                color_positions[val].append((r, c))
+
+        marker_color = 0
+        marker_row = 0
+        marker_col = 0
+        shape_color = 0
+        for color in color_counts:
+            if color_counts[color] == 1:
+                marker_color = color
+                marker_row = color_positions[color][0][0]
+                marker_col = color_positions[color][0][1]
+            else:
+                shape_color = color
+
+        if marker_color == 0 or shape_color == 0:
+            return None
+
+        shape_cells = color_positions[shape_color]
+        total_row = 0
+        total_col = 0
+        for cell in shape_cells:
+            total_row = total_row + cell[0]
+            total_col = total_col + cell[1]
+        centroid_row = total_row / len(shape_cells)
+        centroid_col = total_col / len(shape_cells)
+
+        row_offset = centroid_row - marker_row
+        col_offset = centroid_col - marker_col
+
+        direction_row = 0
+        direction_col = 0
+        if abs(row_offset) > abs(col_offset):
+            if row_offset > 0:
+                direction_row = 1
+            else:
+                direction_row = -1
+        else:
+            if col_offset > 0:
+                direction_col = 1
+            else:
+                direction_col = -1
+
+        result = []
+        for r in range(grid_rows):
+            result_row = []
+            for c in range(grid_cols):
+                result_row.append(grid[r][c])
+            result.append(result_row)
+
+        # fire off the shared ray caster starting at the marker, tunnel
+        # through shape colored cells (skip_color), paint everything else
+        self.cast_ray_and_paint(result, grid_rows, grid_cols, marker_row, marker_col, direction_row, direction_col, marker_color, shape_color)
+
+        return np.array(result)
+
+    # wrapper: runs the ray cast logic against every training pair first
+    # to make sure its actually the right rule before we trust it enough
+    # to run on the real test grid
+    def try_marker_ray_cast(self, training, test_input):
+
+        for pair in training:
+
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+
+            if in_grid.shape != out_grid.shape:
+                return None
+
+            expected = self.compute_marker_ray_cast(in_grid)
+            if expected is None:
+                return None
+            if not np.array_equal(expected, out_grid):
+                return None
+
+        return self.compute_marker_ray_cast(test_input)
+    
+        # for problems with exactly two colored blocks sitting somewhere on
+    # the grid. turns out the rule here has nothing to do with where the
+    # blocks are relative to each other, its just based on which color
+    # each block is. whichever block is the SMALLER color number shoots
+    # a diagonal trail from its own top-left corner going up-left, and
+    # whichever block is the BIGGER color number shoots a trail from its
+    # own bottom-right corner going down-right. reuses the same shared
+    # ray caster as the marker ray cast function above, just with a way
+    # simpler (and kinda surprising) way of picking the starting corner
+    # and direction
+    def compute_two_block_diagonal_trails(self, grid):
+        grid_rows = len(grid)
+        grid_cols = len(grid[0])
+
+        components = self.get_connected_components(grid)
+
+        # this rule only makes sense with exactly 2 separate colored
+        # blobs on the grid, bail if thats not the case
+        if len(components) != 2:
+            return None
+
+        first_component = components[0]
+        second_component = components[1]
+
+        # figure out which component has the smaller color number and
+        # which has the bigger one
+        if first_component['color'] < second_component['color']:
+            small_color_component = first_component
+            big_color_component = second_component
+        else:
+            small_color_component = second_component
+            big_color_component = first_component
+
+        # build a plain python copy of the grid to work with
+        result = []
+        for r in range(grid_rows):
+            result_row = []
+            for c in range(grid_cols):
+                result_row.append(grid[r][c])
+            result.append(result_row)
+
+        # smaller color: shoot from its top-left corner, heading up-left
+        small_color = small_color_component['color']
+        small_start_row = small_color_component['min_row']
+        small_start_col = small_color_component['min_col']
+        self.cast_ray_and_paint(result, grid_rows, grid_cols, small_start_row, small_start_col, -1, -1, small_color, None)
+
+        # bigger color: shoot from its bottom-right corner, heading down-right
+        big_color = big_color_component['color']
+        big_start_row = big_color_component['max_row']
+        big_start_col = big_color_component['max_col']
+        self.cast_ray_and_paint(result, grid_rows, grid_cols, big_start_row, big_start_col, 1, 1, big_color, None)
+
+        return np.array(result)
+
+    # wrapper: runs the two block diagonal trail logic against every
+    # training pair first to make sure its actually the right rule
+    # before we trust it enough to run on the real test grid
+    def try_two_block_diagonal_trails(self, training, test_input):
+        for pair in training:
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+
+            if in_grid.shape != out_grid.shape:
+                return None
+
+            expected = self.compute_two_block_diagonal_trails(in_grid)
+            if expected is None:
+                return None
+            if not np.array_equal(expected, out_grid):
+                return None
+
+        return self.compute_two_block_diagonal_trails(test_input)
+    
+        # this is the shared "walk in a straight line and paint stuff" logic
+    # that both cardinal rays (straight up/down/left/right) and diagonal
+    # rays (like corner to corner) can use. starts one step past
+    # start_row/start_col in whatever direction we're given, and keeps
+    # walking one step at a time til it falls off the edge of the grid.
+    # if skip_color is set, cells matching that color get tunneled
+    # through without getting painted (thats for shooting through a
+    # shape's own body). if skip_color is None, literally every cell
+    # along the way gets painted, no exceptions. mutates result in place
+    # instead of returning a new grid, since result already exists as a
+    # plain python list of lists by the time we call this
+    def cast_ray_and_paint(self, result, grid_rows, grid_cols, start_row, start_col, direction_row, direction_col, paint_color, skip_color):
+        current_row = start_row + direction_row
+        current_col = start_col + direction_col
+
+        while 0 <= current_row < grid_rows and 0 <= current_col < grid_cols:
+            if skip_color is None or result[current_row][current_col] != skip_color:
+                result[current_row][current_col] = paint_color
+            current_row = current_row + direction_row
+            current_col = current_col + direction_col
+
 
 
     def make_predictions(self, arc_problem: ArcProblem) -> list[np.ndarray]:
@@ -2024,6 +2341,9 @@ class ArcAgent:
             self.try_enclosed_shape_recolor(training, test_input),
             self.try_multi_panel_priority_merge(training, test_input),
             self.try_color_frequency_bars(training, test_input),
+            self.try_crop_shape_recolor_by_marker(training, test_input),
+            self.try_marker_ray_cast(training, test_input),
+            self.try_two_block_diagonal_trails(training, test_input),
             self.try_bounding_box(test_input),
         ]
 

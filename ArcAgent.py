@@ -1118,7 +1118,7 @@ class ArcAgent:
     # wrapper: runs compute_panel_color_histogram against every training pair
     # to confirm the rule actually holds for this problem before trusting it.
     # if any training pair doesn't match (like wrong shape, no grid lines found,
-    # wrong histogram), we bail out with None rather than risk a wrong guess.
+    # wrong histogram), we exit out with None rather than risk a wrong guess.
     # only once every pair checks out do we apply the same computation to
     # the real test input.
     def try_panel_color_histogram(self, training, test_input):
@@ -1206,10 +1206,10 @@ class ArcAgent:
  
         return None
  
-    # "marker" color is scattered both inside and outside the border.
-    # count only the marker dots only inside the border's interior,
-    # then fill a fixed 3x3 output row wise with that many marker color
-    # cells. exterior dots of the marker color don't matter at all.
+    # pattern: marker color sits both inside and outside a rectangl
+    # border. only count marker dots inside the interior, ignore
+    # outside ones. if found, fill 3x3 output row by row with that many
+    # marker cells, left to right
     def compute_marker_count_grid(self, grid):
         border_info = self.find_rectangle_border_color(grid)
         if border_info is None:
@@ -1220,10 +1220,9 @@ class ArcAgent:
         marker_color = 0
         marker_count = 0
 
-        # iterate only inside the border, not the border itself. starting
-        # at (min_row + 1) skips the top/left border row and column, and
-        # stopping at max_row/max_col will skip
-        # the bottom/right border row and column.
+        # loop only inside border, skip border itself. min_row plus 1
+        # skips top and left border line, stop before max_row and
+        # max_col skips bottom and right border line
         for r in range(min_row + 1, max_row):
             for c in range(min_col + 1, max_col):
                 val = grid[r][c]
@@ -1234,8 +1233,7 @@ class ArcAgent:
         if marker_color == 0:
             return None
 
-        #output here is always 3x3. so 
-        #build temporary output grid of correct size
+        # output always 3x3. build blank grid of that size first
         grid_size = 3
         result = []
         for r in range(grid_size):
@@ -1244,11 +1242,9 @@ class ArcAgent:
                 row.append(0)
             result.append(row)
 
-        # fill the 3x3 grid row first then cols top to bottom
-        # with marker_count amount of marker_color (left to right). remaining tracks how
-        # many cells are still left to fill. it counts down by one each
-        # time we place a color, and once it hits 0 every cell after that
-        # stays 0
+        # fill grid row by row, left to right, with marker_count copies
+        # of marker_color. remaining counts down by one each fill, once
+        # it hits 0 rest of cells stay 0
         remaining = marker_count
         for r in range(grid_size):
             for c in range(grid_size):
@@ -1258,12 +1254,9 @@ class ArcAgent:
  
         return np.array(result)
     
-    # wrapper: runs compute_marker_count_grid against every training pair to
-    # confirm the border plus marker count rule actually holds for this
-    # problem before trusting it. if any training pair doesn't match (like no
-    # rectangle border found, no marker color found, wrong count), exit
-    # out with None instead of risking a wrong guess. only once every pair
-    # checks out do we apply the same computation to the real test input.
+    # wrapper function: run compute on every training input, if result
+    # is none or doesnt match training output, return none. else run
+    # compute on test input
     def try_marker_count_grid(self, training, test_input):
         for pair in training:
             in_grid = pair.get_input_data().data()
@@ -1278,9 +1271,10 @@ class ArcAgent:
         return self.compute_marker_count_grid(test_input)
     
     
-    # crops out the shape then just swaps whichever two colors it finds.
-    # basically reuses the bounding box logic we already have and adds a
-    # color swap step on top
+    # wrapper function: crop shape with bounding box helper, then find
+    # first two distinct nonzero colors, swap them everywhere. run on
+    # every training pair first, if any mismatch return none, else run
+    # on test input
     def try_crop_and_swap_colors(self, training, test_input):
         for pair in training:
             in_grid = pair.get_input_data().data()
@@ -1295,8 +1289,8 @@ class ArcAgent:
             crop_rows = len(cropped)
             crop_cols = len(cropped[0])
 
-            # walk the cropped grid and grab the first two different
-            # nonzero colors we see. those are our swap pair
+            # walk cropped grid, grab first two different nonzero
+            # colors seen, those are the swap pair
             color_a = 0
             color_b = 0
             for r in range(crop_rows):
@@ -1309,7 +1303,7 @@ class ArcAgent:
                     elif current_val != color_a and color_b == 0:
                         color_b = current_val
 
-            # if we didn't find two distinct colors this rule doesn't apply
+            # if two distinct colors not found, rule doesnt apply
             if color_a == 0 or color_b == 0:
                 return None
 
@@ -1324,7 +1318,7 @@ class ArcAgent:
             if not np.array_equal(expected, out_grid):
                 return None
 
-        # same swap logic, just running it on the actual test input now
+        # same swap logic, now run it on the real test input
         cropped = self.try_bounding_box(test_input)
         if cropped is None:
             return None
@@ -1358,9 +1352,9 @@ class ArcAgent:
         return result
 
 
-    # takes any solid filled in rectangle block and hollows it out, just
-    # leaves the outline behind. kinda like popping the middle out of a
-    # cracker
+    # pattern: if a shape is a solid filled rectangle, hollow it out,
+    # leave only the outline. if cell count doesnt fill height times
+    # width, shape isnt solid, skip it and leave as is
     def compute_hollow_solid_rectangles(self, grid):
         result = grid.copy()
         components = self.get_connected_components(grid)
@@ -1374,22 +1368,23 @@ class ArcAgent:
             box_height = max_row - min_row + 1
             box_width = max_col - min_col + 1
 
-            # a solid block should have exactly height times width cells,
-            # no gaps anywhere. if the count is off this isn't solid so skip it
+            # solid block should have height times width cells exactly,
+            # no gaps. if count is off, not solid, skip it
             total_cells_in_component = len(component['cells'])
             expected_cell_count_if_solid = box_height * box_width
             if total_cells_in_component != expected_cell_count_if_solid:
                 continue
 
-            # carve out everything except the outer ring
+            # clear everything except the outer ring
             for r in range(min_row + 1, max_row):
                 for c in range(min_col + 1, max_col):
                     result[r][c] = 0
 
         return result
 
-    # just runs the hollowing logic against training first to make sure
-    # its actually the right rule before trusting it on the test grid
+    # wrapper function: run compute on every training input, if shape
+    # or values dont match training output, return none. else run
+    # compute on test input
     def try_hollow_solid_rectangles(self, training, test_input):
         for pair in training:
             in_grid = pair.get_input_data().data()
@@ -1405,14 +1400,14 @@ class ArcAgent:
         return self.compute_hollow_solid_rectangles(test_input)
 
 
-    # swaps a marker color for whatever other color is chilling in the
-    # grid, and turns that other color into background. basically a two
-    # color swap but one direction becomes blank
+    # helper function: find the other nonzero color in grid besides
+    # marker. if found, swap every marker cell to that color, and every
+    # other cell to blank. if no other color found, return none
     def apply_marker_swap(self, grid, marker_color):
         grid_rows = len(grid)
         grid_cols = len(grid[0])
 
-        # find whatever the "other" color is (not marker, not background)
+        # find the other color, not marker, not background
         other_color = 0
         for r in range(grid_rows):
             for c in range(grid_cols):
@@ -1436,11 +1431,11 @@ class ArcAgent:
 
         return np.array(result)
 
-    # finds whichever color shows up in literally every training input,
-    # thats our "marker". everything with the marker color gets swapped to
-    # whatever the other color in that grid is, everything else goes blank.
-    # figuring out the marker by intersecting colors across training pairs
-    # is what makes this generalize instead of us hardcoding some color
+    # wrapper function: marker color is whichever color shows up in
+    # every training input, found by intersecting color lists across
+    # all pairs. if not exactly one shared color, return none. else run
+    # apply_marker_swap on every training pair, if any mismatch return
+    # none, else run on test input
     def try_swap_common_marker(self, training, test_input):
         common_colors = None
         for pair in training:
@@ -1458,15 +1453,15 @@ class ArcAgent:
             if common_colors is None:
                 common_colors = colors_in_this_grid
             else:
-                # only keep colors that show up in both the running list
-                # and this grid's list
+                # keep only colors that show up in running list and
+                # this grid list too
                 still_common = []
                 for color in common_colors:
                     if color in colors_in_this_grid:
                         still_common.append(color)
                 common_colors = still_common
 
-        # needs to be exactly one shared color for this rule to make sense
+        # if not exactly one shared color, rule doesnt apply
         if common_colors is None or len(common_colors) != 1:
             return None
 
@@ -1488,7 +1483,8 @@ class ArcAgent:
         return self.apply_marker_swap(test_input, marker_color)
 
 
-    # quick check, is this sub grid literally just all zeros
+    # helper function: check if every cell in sub grid is zero,
+    # return true if so else false
     def is_all_background(self, sub_grid):
         sub_rows = len(sub_grid)
         sub_cols = len(sub_grid[0])
@@ -1498,9 +1494,9 @@ class ArcAgent:
                     return False
         return True
 
-    # given a grid thats split in half with one side totally blank, mirror
-    # the populated half into the blank side. building the final grid by
-    # hand row by row. 
+    # helper function: grid split in half by config, one side totally
+    # blank. if that side isnt blank, return none. else mirror the
+    # populated half into blank side, build result row by row
     def apply_reflect_fill(self, grid, config):
         grid_rows = len(grid)
         grid_cols = len(grid[0])
@@ -1515,7 +1511,7 @@ class ArcAgent:
             if config == 'top_blank':
                 if not self.is_all_background(top_half):
                     return None
-                # mirror bottom_half upside down to make the new top
+                # flip bottom half upside down to make new top
                 mirrored_top = np.flipud(bottom_half)
 
                 result_rows = []
@@ -1551,8 +1547,8 @@ class ArcAgent:
                     return None
                 mirrored_left = np.fliplr(right_half)
 
-                # build result row by row, gluing the mirrored left piece
-                # and the right half together for each row
+                # build result row by row, join mirrored left piece
+                # and right half together for each row
                 result_rows = []
                 for r in range(len(right_half)):
                     combined_row = []
@@ -1581,9 +1577,9 @@ class ArcAgent:
 
         return None
 
-    # tries all four blank half configs (top, bottom, left, right) against
-    # training, uses whichever one actually works consistently, then
-    # applies that same config to the test grid
+    # wrapper function: try each of four configs, top blank, bottom
+    # blank, left blank, right blank. if one config matches every
+    # training pair, use it on test input. if none match, return none
     def try_reflect_fill_half(self, training, test_input):
         matched_config = None
         config_options = ['top_blank', 'bottom_blank', 'left_blank', 'right_blank']
@@ -1616,20 +1612,15 @@ class ArcAgent:
 
         return self.apply_reflect_fill(test_input, matched_config)
     
-    # figures out what the "background" color actually is for this
-    # specific grid, instead of just blindly assuming its always 0. some
-    # problems use a totally different color as their blank canvas (like
-    # b2862040 which uses 9 everywhere instead of 0). background is
-    # whatever color shows up the most across the whole grid, since the
-    # blank canvas color is basically always gonna dominate by a mile
-    # compared to any of the actual shapes drawn on top of it
+    # helper function: dont assume background is always 0, some grids
+    # use a different blank canvas color. count every color in grid,
+    # return whichever color has the highest count, that is background
     def find_most_common_color(self, grid):
         grid_rows = len(grid)
         grid_cols = len(grid[0])
 
-        # tally up how many times each color shows up, 0 included, we're
-        # not filtering anything out here since we actually want to know
-        # if 0 or something else wins
+        # tally how many times each color shows up, 0 included, we
+        # want to know if 0 or another color wins
         color_counts = {}
         for r in range(grid_rows):
             for c in range(grid_cols):
@@ -1638,8 +1629,8 @@ class ArcAgent:
                     color_counts[val] = 0
                 color_counts[val] = color_counts[val] + 1
 
-        # walk the tally and just keep track of whichever color has the
-        # biggest count so far
+        # walk the tally, keep track of whichever color has biggest
+        # count so far
         most_common_color = 0
         highest_count_seen = 0
         for color in color_counts:
@@ -1651,15 +1642,11 @@ class ArcAgent:
         return most_common_color
 
 
-    # this one's for finding shapes that "trap" a pocket of background
-    # inside themselves, kinda like a donut vs a stick. flood fill in from
-    # every background cell sitting on the outer edge of the grid, only
-    # moving through background cells (never through shape cells). any
-    # background cell that never gets touched by this flood fill is
-    # "trapped" since there's no path from it back out to the edge without
-    # crossing a shape. background param lets us pass in whatever color
-    # this specific grid actually uses as its blank canvas color, since it
-    # might not be 0
+    # helper function: flood fill from every background cell on the
+    # outer edge, only step through background cells, never through
+    # shape cells. if a background cell is never reached, it is trapped
+    # inside a shape. background param lets caller pass whatever color
+    # this grid actually uses as blank, since it might not be 0
     def find_border_reachable_background(self, grid, background=0):
         grid_rows = len(grid)
         grid_cols = len(grid[0])
@@ -1671,9 +1658,9 @@ class ArcAgent:
                 reachable_row.append(False)
             reachable.append(reachable_row)
 
-        # grab every background cell sitting right on the outer edge of
-        # the grid, these are our starting points since anything touching
-        # the actual border of the grid is definitely "outside" everything
+        # grab every background cell on the outer edge, these are the
+        # starting points, anything touching grid border counts as
+        # outside
         starting_cells = []
         for r in range(grid_rows):
             for c in range(grid_cols):
@@ -1689,8 +1676,8 @@ class ArcAgent:
                 reachable[start_r][start_c] = True
                 stack.append((start_r, start_c))
 
-        # standard flood fill with a stack, only allowed to step onto
-        # cells that are also background color, shape cells act like walls
+        # flood fill with a stack, only step onto background color
+        # cells, shape cells act like walls
         while len(stack) > 0:
             r, c = stack.pop()
 
@@ -1721,17 +1708,12 @@ class ArcAgent:
         return reachable
 
 
-    # runs the border flood fill, then for every shape matching target_color
-    # checks if its own bounding box has any background cell hiding inside
-    # it that never got touched by the flood fill (meaning its trapped/
-    # enclosed). if it finds a trapped pocket, that whole shape gets
-    # swapped over to output_color. shapes with no trapped pocket (like
-    # open/branching ones with gaps leading back out to the edge) get left
-    # completely alone
+    # pattern: run border flood fill first. for every shape matching
+    # target_color, check its bounding box for a background cell the
+    # fill never reached. if found, shape is enclosed, swap whole shape
+    # to output_color. if no trapped cell found, leave shape as is
     def compute_enclosed_shape_recolor(self, grid, target_color, output_color):
-        # figure out this grid's actual background color instead of just
-        # assuming its 0, since some problems (like b2862040) use a
-        # totally different color as their blank canvas
+        # find this grid actual background color, dont just assume 0
         background_color = self.find_most_common_color(grid)
 
         reachable = self.find_border_reachable_background(grid, background_color)
@@ -1747,9 +1729,8 @@ class ArcAgent:
             min_col = component['min_col']
             max_col = component['max_col']
 
-            # scan the shape's own bounding box looking for any background
-            # cell that the flood fill never reached, that's our trapped
-            # pocket signal
+            # scan shape bounding box for a background cell the flood
+            # fill never reached, that is the trapped pocket signal
             has_trapped_pocket = False
             for r in range(min_row, max_row + 1):
                 for c in range(min_col, max_col + 1):
@@ -1765,12 +1746,10 @@ class ArcAgent:
         return result
 
 
-    # first figures out what color swap we're even looking for by diffing
-    # every input cell against its matching output cell across training
-    # (should be exactly one consistent target_color -> output_color swap
-    # everywhere something changed). then double checks the enclosed shape
-    # logic actually reproduces every single training pair exactly before
-    # trusting it enough to run on the real test grid
+    # wrapper function: diff every input cell against output cell
+    # across training, if always same target_color to output_color
+    # swap, lock it in, else exit. then run compute on every training
+    # pair, if any mismatch return none, else run compute on test input
     def try_enclosed_shape_recolor(self, training, test_input):
         target_color = 0
         output_color = 0
@@ -1788,14 +1767,13 @@ class ArcAgent:
                 for c in range(grid_cols):
                     if in_grid[r][c] != out_grid[r][c]:
                         if target_color == 0:
-                            # first difference we've seen, lock in what the
+                            # first difference seen, lock in what the
                             # swap should be
                             target_color = in_grid[r][c]
                             output_color = out_grid[r][c]
                         else:
-                            # any later difference has to match that exact
-                            # same swap, otherwise this isn't a consistent
-                            # rule and we bail
+                            # any later difference must match that exact
+                            # same swap, else its not consistent, exit
                             if in_grid[r][c] != target_color or out_grid[r][c] != output_color:
                                 return None
 
@@ -1812,27 +1790,24 @@ class ArcAgent:
 
         return self.compute_enclosed_shape_recolor(test_input, target_color, output_color)
     
-    # splits a grid into 3 or more panels along whichever single axis has
-    # separator lines going on (reuses find_grid_lines/get_panel_segments
-    # from the histogram function up above), then does a priority merge
-    # cell by cell -- first panel in line wins if its cell is nonzero,
-    # otherwise fall through to the next panel, all the way down till we
-    # hit a nonzero or run out of panels
+    # pattern: split grid into 3 or more panels along whichever axis has
+    # separator lines. merge cell by cell, first panel wins if its cell
+    # is nonzero, else fall through to next panel, keep going until a
+    # nonzero is found or panels run out
     def compute_multi_panel_priority_merge(self, grid):
         row_lines, col_lines = self.find_grid_lines(grid)
 
         has_row_lines = len(row_lines) > 0
         has_col_lines = len(col_lines) > 0
 
-        # only handle the case where exactly one axis has separator lines
-        # going on, a grid with lines on both axes is too ambiguous for
-        # this specific rule to make sense
+        # only handle case where exactly one axis has separator lines,
+        # if lines on both axes, too ambigous, rule doesnt apply
         if has_row_lines and has_col_lines:
             return None
         if not has_row_lines and not has_col_lines:
             return None
 
-        # slice out each panel along whichever axis actually had lines
+        # slice out each panel along whichever axis has lines
         panels = []
         if has_col_lines:
             segments = self.get_panel_segments(len(grid[0]), col_lines)
@@ -1847,21 +1822,20 @@ class ArcAgent:
                 seg_end = segment[1]
                 panels.append(grid[seg_start:seg_end, :])
 
-        # need at least 2 panels for a "merge" to even make sense here
+        # if fewer than 2 panels, merge doesnt make sense, exit
         if len(panels) < 2:
             return None
 
-        # every panel needs to be the exact same shape for this to work,
-        # otherwise theres no consistent cell by cell comparison possible
+        # every panel must be exact same shape, else no consistent
+        # cell by cell comparison is possible
         panel_rows = len(panels[0])
         panel_cols = len(panels[0][0])
         for panel in panels:
             if len(panel) != panel_rows or len(panel[0]) != panel_cols:
                 return None
 
-        # walk every cell position, and for each one check the panels in
-        # order (left to right, or top to bottom), first nonzero value we
-        # hit wins that cell
+        # walk every cell position, check panels in order, first
+        # nonzero value found wins that cell
         result = []
         for r in range(panel_rows):
             result_row = []
@@ -1876,9 +1850,9 @@ class ArcAgent:
 
         return np.array(result)
 
-    # just runs the priority merge logic against training first to make
-    # sure its actually the right rule (right shape, right values) before
-    # trusting it enough to run on the real test grid
+    # wrapper function: run compute on every training input, if result
+    # is none or shape or values dont match training output, return
+    # none. else run compute on test input
     def try_multi_panel_priority_merge(self, training, test_input):
         for pair in training:
             in_grid = pair.get_input_data().data()
@@ -1895,11 +1869,9 @@ class ArcAgent:
         return self.compute_multi_panel_priority_merge(test_input)
 
 
-    # just counts up how many times each color shows up anywhere in the
-    # grid, no panels or separators involved at all here, this is way
-    # simpler than the histogram function up above. output ends up being a
-    # bar chart, tallest bar (most common color) goes on the left, columns
-    # get shorter heading right as we run out of frequency
+    # pattern: count how many times each color shows up in grid, no
+    # panels involved. sort colors by count, tallest bar on the left,
+    # bars get shorter moving right as frequency runs out
     def compute_color_frequency_bars(self, grid):
         grid_rows = len(grid)
         grid_cols = len(grid[0])
@@ -1917,15 +1889,14 @@ class ArcAgent:
         if len(color_counts) == 0:
             return None
 
-        # build a list of (count, color) pairs so we've got something we
-        # can actually sort by count
+        # build list of (count, color) pairs so we can sort by count
         color_count_pairs = []
         for color in color_counts:
             count = color_counts[color]
             color_count_pairs.append((count, color))
 
-        # manual descending bubble sort by count, list's tiny here (max 10
-        # colors ever) so this is plenty fast, no need for anything fancy
+        # manual descending bubble sort by count, list is tiny, max 10
+        # colors ever, plenty fast, no need for anything fancy
         num_pairs = len(color_count_pairs)
         for i in range(num_pairs):
             for j in range(num_pairs - 1 - i):
@@ -1937,8 +1908,8 @@ class ArcAgent:
         tallest_count = color_count_pairs[0][0]
         num_colors = len(color_count_pairs)
 
-        # build a blank grid sized to fit the tallest bar (rows) by however
-        # many distinct colors we found (cols)
+        # build blank grid sized for tallest bar as rows, and however
+        # many distinct colors found as cols
         result = []
         for r in range(tallest_count):
             row = []
@@ -1946,9 +1917,8 @@ class ArcAgent:
                 row.append(0)
             result.append(row)
 
-        # for each color's column, fill from the bottom up (row 0 down to
-        # count-1) with that color, taller bars just naturally end up
-        # filling more rows
+        # for each color column, fill from bottom up with that color,
+        # taller bars end up filling more rows naturally
         for col_index in range(num_colors):
             count_for_col = color_count_pairs[col_index][0]
             color_for_col = color_count_pairs[col_index][1]
@@ -1957,8 +1927,9 @@ class ArcAgent:
 
         return np.array(result)
 
-    # just runs the color counting logic against training first to make
-    # sure its actually the right rule before trusting it on the test grid
+    # wrapper function: run compute on every training input, if result
+    # is none or shape or values dont match training output, return
+    # none. else run compute on test input
     def try_color_frequency_bars(self, training, test_input):
         for pair in training:
             in_grid = pair.get_input_data().data()
@@ -1974,19 +1945,18 @@ class ArcAgent:
 
         return self.compute_color_frequency_bars(test_input)
 
-    # this one's for problems where 4 lonely single-pixel "marker" dots
-    # sit at the exact corners of an invisible rectangle, and theres a
-    # shape of a different color living somewhere inside that rectangle.
-    # the crop we want is the INTERIOR of that rectangle (one step in
-    # from each corner, not counting the corner row/col itself), and we
-    # repaint the shape using the marker color instead of its own color
+    # pattern: 4 marker dots sit at corners of an invisible
+    # rectangle, a shape of a different color lives inside it. crop the
+    # interior, one step in from each corner, skip the corners
+    # themselves. repaint shape cells using marker color instead of its
+    # own color
     def compute_crop_shape_recolor_by_marker(self, grid):
         components = self.get_connected_components(grid)
 
         if len(components) == 0:
             return None
 
-        # bucket every component by color again, same deal as before
+        # bucket every component by color again, same as before
         components_by_color = {}
         for component in components:
             color = component['color']
@@ -1994,9 +1964,9 @@ class ArcAgent:
                 components_by_color[color] = []
             components_by_color[color].append(component)
 
-        # the marker color needs to form EXACTLY 4 components, and every
-        # single one of them needs to be just 1 cell (four lonely dots).
-        # walk through each color and check for that specific pattern
+        # marker color must form exactly 4 components, each one must
+        # be a single cell, four isolated dots. walk each color and check
+        # for that pattern
         marker_color = 0
         marker_positions = []
         for color in components_by_color:
@@ -2014,7 +1984,7 @@ class ArcAgent:
         if marker_color == 0:
             return None
 
-        # shape color is just whatever the other nonzero color is
+        # shape color is whatever the other nonzero color is
         shape_color = 0
         for color in components_by_color:
             if color != marker_color:
@@ -2023,8 +1993,8 @@ class ArcAgent:
         if shape_color == 0:
             return None
 
-        # find the min/max row and col across our 4 marker dots, this
-        # gives us the rectangle they're sitting at the corners of
+        # find min and max row and col across the 4 marker dots, this
+        # gives the rectangle they sit at the corners of
         frame_min_row = marker_positions[0][0]
         frame_max_row = marker_positions[0][0]
         frame_min_col = marker_positions[0][1]
@@ -2041,17 +2011,15 @@ class ArcAgent:
             if pos_col > frame_max_col:
                 frame_max_col = pos_col
 
-        # double check the 4 dots are actually sitting at real corners
-        # and not just scattered randomly, if the rectangle is too small
-        # to even have an interior this rule doesn't apply either
+        # if dots are not really sitting at corners, or rectangle is
+        # too small to have an interior, rule doesnt apply
         if frame_max_row - frame_min_row < 2:
             return None
         if frame_max_col - frame_min_col < 2:
             return None
 
-        # the crop we actually want is the INTERIOR of that rectangle,
-        # one step in from each corner row/col, not including the
-        # corners themselves
+        # crop we want is the interior of that rectangle, one step in
+        # from each corner row and col, skip corners themselves
         interior_min_row = frame_min_row + 1
         interior_max_row = frame_max_row - 1
         interior_min_col = frame_min_col + 1
@@ -2060,9 +2028,8 @@ class ArcAgent:
         box_height = interior_max_row - interior_min_row + 1
         box_width = interior_max_col - interior_min_col + 1
 
-        # build the crop by hand, plain python the whole way. wherever
-        # we see the shape's original color inside the interior, paint
-        # the marker color there instead. everything else stays 0
+        # build crop by hand. if cell inside interior matches shape
+        # color, paint marker color instead. else cell stays 0
         result = []
         for r in range(box_height):
             result_row = []
@@ -2077,9 +2044,9 @@ class ArcAgent:
 
         return np.array(result)
 
-    # wrapper: checks the frame interior crop logic against every
-    # training pair first, only trusts it enough to run on the real test
-    # grid once every single pair lines up exactly
+    # wrapper function: run compute on every training input, if result
+    # is none or shape or values dont match training output, return
+    # none. else run compute on test input
     def try_crop_shape_recolor_by_marker(self, training, test_input):
         for pair in training:
             in_grid = pair.get_input_data().data()
@@ -2095,16 +2062,11 @@ class ArcAgent:
 
         return self.compute_crop_shape_recolor_by_marker(test_input)
 
-    # for problems where a shape has one single cell inside it
-    # swapped out for a different marker color, kinda like a
-    # arrow poking into the shape telling us which way to shoot. we find
-    # that marker cell, figure out which direction points from the
-    # marker through the thickest part of the shape, then walk that
-    # direction starting at the marker: hop over any shape colored cells
-    # we bump into (thats us tunneling through the shape's body), and
-    # once we pop out the other side into open background we start
-    # filling marker color all the way out til we hit the edge of the
-    # grid, like a laser beam shooting through and past the shape
+    # pattern: shape has one cell swapped for a marker color, acts like
+    # an arrow. find marker cell, find shape center of mass, pick
+    # direction from marker toward that center. walk that direction from
+    # marker, skip over shape colored cells while moveing through, once
+    # past the shape paint marker color the rest of the way to the edge
     def compute_marker_ray_cast(self, grid):
         grid_rows = len(grid)
         grid_cols = len(grid[0])
@@ -2169,15 +2131,15 @@ class ArcAgent:
                 result_row.append(grid[r][c])
             result.append(result_row)
 
-        # fire off the shared ray caster starting at the marker, tunnel
-        # through shape colored cells (skip_color), paint everything else
+        # fire the shared ray caster from the marker, move through
+        # shape colored cells using skip_color, paint everything else
         self.cast_ray_and_paint(result, grid_rows, grid_cols, marker_row, marker_col, direction_row, direction_col, marker_color, shape_color)
 
         return np.array(result)
 
-    # wrapper: runs the ray cast logic against every training pair first
-    # to make sure its actually the right rule before we trust it enough
-    # to run on the real test grid
+    # wrapper function: run compute on every training input, if result
+    # is none or doesnt match training output, return none. else run
+    # compute on test input
     def try_marker_ray_cast(self, training, test_input):
 
         for pair in training:
@@ -2196,32 +2158,27 @@ class ArcAgent:
 
         return self.compute_marker_ray_cast(test_input)
     
-        # for problems with exactly two colored blocks sitting somewhere on
-    # the grid. turns out the rule here has nothing to do with where the
-    # blocks are relative to each other, its just based on which color
-    # each block is. whichever block is the SMALLER color number shoots
-    # a diagonal trail from its own top-left corner going up-left, and
-    # whichever block is the BIGGER color number shoots a trail from its
-    # own bottom-right corner going down-right. reuses the same shared
-    # ray caster as the marker ray cast function above, just with a way
-    # simpler (and kinda surprising) way of picking the starting corner
-    # and direction
+    # pattern: exactly two colored blocks on the grid, rule depends only
+    # on which color each block is, not their position. if a block has
+    # the smaller color number, shoot a diagonal trail from its top left
+    # corner heading up and left. if a block has the bigger color
+    # number, shoot a trail from its bottom right corner heading down
+    # and right
     def compute_two_block_diagonal_trails(self, grid):
         grid_rows = len(grid)
         grid_cols = len(grid[0])
 
         components = self.get_connected_components(grid)
 
-        # this rule only makes sense with exactly 2 separate colored
-        # blobs on the grid, bail if thats not the case
+        # if not exactly 2 separate colored blobs on grid, exit
         if len(components) != 2:
             return None
 
         first_component = components[0]
         second_component = components[1]
 
-        # figure out which component has the smaller color number and
-        # which has the bigger one
+        # figure out which component has smaller color number and
+        # which has bigger one
         if first_component['color'] < second_component['color']:
             small_color_component = first_component
             big_color_component = second_component
@@ -2229,7 +2186,7 @@ class ArcAgent:
             small_color_component = second_component
             big_color_component = first_component
 
-        # build a plain python copy of the grid to work with
+        # build plain python copy of grid to work with
         result = []
         for r in range(grid_rows):
             result_row = []
@@ -2237,13 +2194,13 @@ class ArcAgent:
                 result_row.append(grid[r][c])
             result.append(result_row)
 
-        # smaller color: shoot from its top-left corner, heading up-left
+        # smaller color, shoot from top left corner heading up and left
         small_color = small_color_component['color']
         small_start_row = small_color_component['min_row']
         small_start_col = small_color_component['min_col']
         self.cast_ray_and_paint(result, grid_rows, grid_cols, small_start_row, small_start_col, -1, -1, small_color, None)
 
-        # bigger color: shoot from its bottom-right corner, heading down-right
+        # bigger color, shoot from bottom right corner heading down and right
         big_color = big_color_component['color']
         big_start_row = big_color_component['max_row']
         big_start_col = big_color_component['max_col']
@@ -2251,9 +2208,9 @@ class ArcAgent:
 
         return np.array(result)
 
-    # wrapper: runs the two block diagonal trail logic against every
-    # training pair first to make sure its actually the right rule
-    # before we trust it enough to run on the real test grid
+    # wrapper function: run compute on every training input, if result
+    # is none or doesnt match training output, return none. else run
+    # compute on test input
     def try_two_block_diagonal_trails(self, training, test_input):
         for pair in training:
             in_grid = pair.get_input_data().data()
@@ -2270,17 +2227,12 @@ class ArcAgent:
 
         return self.compute_two_block_diagonal_trails(test_input)
     
-        # this is the shared "walk in a straight line and paint stuff" logic
-    # that both cardinal rays (straight up/down/left/right) and diagonal
-    # rays (like corner to corner) can use. starts one step past
-    # start_row/start_col in whatever direction we're given, and keeps
-    # walking one step at a time til it falls off the edge of the grid.
-    # if skip_color is set, cells matching that color get tunneled
-    # through without getting painted (thats for shooting through a
-    # shape's own body). if skip_color is None, literally every cell
-    # along the way gets painted, no exceptions. mutates result in place
-    # instead of returning a new grid, since result already exists as a
-    # plain python list of lists by the time we call this
+    # helper function: shared walk and paint logic for straight rays
+    # and diagonal rays. start one step past start_row and start_col in
+    # given direction, keep walking one step at a time until off grid.
+    # if skip_color is set, cells of that color get skipped, not
+    # painted, else every cell along the way gets painted. changes
+    # result in place
     def cast_ray_and_paint(self, result, grid_rows, grid_cols, start_row, start_col, direction_row, direction_col, paint_color, skip_color):
         current_row = start_row + direction_row
         current_col = start_col + direction_col
@@ -2290,6 +2242,1422 @@ class ArcAgent:
                 result[current_row][current_col] = paint_color
             current_row = current_row + direction_row
             current_col = current_col + direction_col
+
+      # pattern: output is input tiled into 3x3 grid of mirrored copies.
+    # if block is the center tile, use input as is. if block is left or
+    # right of center, flip it left right. if block is above or below
+    # center, flip it up down. if block is a corner, flip both ways at
+    # once, so it looks like a 180 spin. build output block by block,
+    # picking source row and col based on which flips apply
+    def compute_mirror_tile_3x3(self, grid):
+
+        rows = len(grid)
+        cols = len(grid[0])
+ 
+        result = []
+
+        for block_r in range(3):
+
+            for r in range(rows):
+
+                row_out = []
+
+                for block_c in range(3):
+
+                    # if block row is not the middle row, flip vertical.
+                    # if block col is not the middle col, flip horizontal.
+                    # middle block gets no flip, so it stays plain input
+                    flip_rows = block_r != 1
+                    flip_cols = block_c != 1
+
+                    for c in range(cols):
+
+                        if flip_rows:
+                            source_r = rows - 1 - r
+                        else:
+                            source_r = r
+
+                        if flip_cols:
+                            source_c = cols - 1 - c
+                        else:
+                            source_c = c
+
+                        row_out.append(grid[source_r][source_c])
+
+                result.append(row_out)
+ 
+        return np.array(result)
+ 
+    # wrapper function: if output shape isnt exactly 3 times input shape
+    # on both axis, exit. run compute on every training input, if any
+    # result doesnt match training output, return none. else run compute
+    # on test input
+    def try_mirror_tile_3x3(self, training, test_input):
+
+        for pair in training:
+
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+ 
+            if out_grid.shape[0] != in_grid.shape[0] * 3:
+                return None
+
+            if out_grid.shape[1] != in_grid.shape[1] * 3:
+                return None
+ 
+            expected = self.compute_mirror_tile_3x3(in_grid)
+
+            if not np.array_equal(expected, out_grid):
+                return None
+ 
+        return self.compute_mirror_tile_3x3(test_input)
+ 
+    # pattern: grid has one lone 1 pixel and one lone 2 pixel, draw path
+    # of 3s between them. walk diagonal out of the 1 as far as possible,
+    # then walk straight the rest of the way, then one last diagonal hop
+    # lands on the 2. if row distance equals col distance, path is pure
+    # diagonal. if row or col distance is zero, path is pure straight
+    def compute_point_to_point_path(self, grid):
+
+        rows = len(grid)
+        cols = len(grid[0])
+ 
+        # scan grid for the 1 and the 2. if more than one of either, or
+        # any other color shows up, exit with none
+        one_pos = None
+        two_pos = None
+
+        for r in range(rows):
+
+            for c in range(cols):
+
+                val = grid[r][c]
+
+                if val == 1:
+                    if one_pos is not None:
+                        return None
+
+                    one_pos = (r, c)
+                elif val == 2:
+                    if two_pos is not None:
+                        return None
+
+                    two_pos = (r, c)
+                elif val != 0:
+                    return None
+ 
+        if one_pos is None or two_pos is None:
+            return None
+ 
+        row_dist = two_pos[0] - one_pos[0]
+        col_dist = two_pos[1] - one_pos[1]
+ 
+        # if row distance positive step down, if negative step up, if
+        # zero no row step. same check for col
+        step_r = 0
+
+        if row_dist > 0:
+            step_r = 1
+        elif row_dist < 0:
+            step_r = -1
+
+        step_c = 0
+
+        if col_dist > 0:
+            step_c = 1
+        elif col_dist < 0:
+            step_c = -1
+ 
+        abs_r = abs(row_dist)
+        abs_c = abs(col_dist)
+        diag_steps = min(abs_r, abs_c)
+        straight_steps = abs(abs_r - abs_c)
+ 
+        result = grid.copy()
+        cur_r = one_pos[0]
+        cur_c = one_pos[1]
+ 
+        if diag_steps == 0:
+            # if diagonal steps is zero, points already lined up straight,
+            # so just walk straight and connect them
+            for _ in range(straight_steps - 1):
+
+                cur_r = cur_r + step_r
+                cur_c = cur_c + step_c
+                result[cur_r][cur_c] = 3
+
+            return result
+ 
+        # walk diagonal out of the 1, stop one short of the last hop
+        for _ in range(diag_steps - 1):
+
+            cur_r = cur_r + step_r
+            cur_c = cur_c + step_c
+            result[cur_r][cur_c] = 3
+ 
+        # walk straight on whichever axis still has distance left, row
+        # axis if row distance is bigger, else col axis
+        for _ in range(straight_steps):
+
+            if abs_r > abs_c:
+                cur_r = cur_r + step_r
+            else:
+                cur_c = cur_c + step_c
+
+            result[cur_r][cur_c] = 3
+ 
+        # last diagonal hop lands right on the 2, so leave it as is
+        return result
+ 
+    # wrapper function: if shape mismatch for any training pair, exit.
+    # run compute on every training input, if result is none or doesnt
+    # match training output, return none. else run compute on test input
+    def try_point_to_point_path(self, training, test_input):
+
+        for pair in training:
+
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+ 
+            if in_grid.shape != out_grid.shape:
+                return None
+ 
+            expected = self.compute_point_to_point_path(in_grid)
+
+            if expected is None:
+                return None
+
+            if not np.array_equal(expected, out_grid):
+                return None
+ 
+        return self.compute_point_to_point_path(test_input)
+ 
+    # pattern: input is single row with one marker pixel, output is a
+    # square grid, side length equal to input width. marker splashes down
+    # as a V wave, left arm goes down left, right arm goes down right,
+    # each arm clipped once it goes off grid. after the V, trailing
+    # ripples of color 1 spawn on every other row (3, 5, 7...), each one
+    # starting two cells right of the left arm position, then running
+    # diagonal down right until it exits the grid
+    def compute_diamond_wave(self, grid):
+
+        # if grid is not a single row, rule doesnt apply
+        if len(grid) != 1:
+            return None
+ 
+        cols = len(grid[0])
+ 
+        # scan row for marker pixel, if more than one nonzero cell, exit
+        marker_col = -1
+        marker_color = 0
+
+        for c in range(cols):
+
+            if grid[0][c] != 0:
+                if marker_col != -1:
+                    return None
+
+                marker_col = c
+                marker_color = grid[0][c]
+ 
+        if marker_col == -1:
+            return None
+ 
+        size = cols
+        result = []
+
+        for r in range(size):
+
+            result.append([0] * size)
+ 
+        # draw V wave in marker color, left arm goes down left, right arm
+        # goes down right, only paint if cell is still inside grid
+        for r in range(size):
+
+            left = marker_col - r
+            right = marker_col + r
+
+            if 0 <= left < size:
+                result[r][left] = marker_color
+
+            if 0 <= right < size:
+                result[r][right] = marker_color
+ 
+        # spawn trailing 1 ripple every other row (3, 5, 7...), start two
+        # cells right of the left arm position, shoot each down right
+        spawn_row = 3
+
+        while True:
+
+            start_col = marker_col - spawn_row + 2
+ 
+            # if start col is off grid to the left, entry row shifts down
+            # until col reaches zero. if that entry row is past the bottom,
+            # no later ripple can show up either, so stop the loop
+            if start_col < 0:
+                entry_row = spawn_row - start_col
+            else:
+                entry_row = spawn_row
+
+            if entry_row >= size:
+                break
+ 
+            # walk ripple down right one cell at a time. if cell is in
+            # bounds and still blank, paint it 1. if cell has a color
+            # already, skip it
+            step = 0
+
+            while spawn_row + step < size:
+
+                rr = spawn_row + step
+                cc = start_col + step
+
+                if 0 <= cc < size:
+                    if result[rr][cc] == 0:
+                        result[rr][cc] = 1
+
+                step = step + 1
+ 
+            spawn_row = spawn_row + 2
+ 
+        return np.array(result)
+ 
+    # wrapper function: run compute on every training input, if result is
+    # none or shape or values dont match training output, return none.
+    # else run compute on test input
+    def try_diamond_wave(self, training, test_input):
+
+        for pair in training:
+
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+ 
+            expected = self.compute_diamond_wave(in_grid)
+
+            if expected is None:
+                return None
+
+            if expected.shape != out_grid.shape:
+                return None
+
+            if not np.array_equal(expected, out_grid):
+                return None
+ 
+        return self.compute_diamond_wave(test_input)
+ 
+    # pattern: bottom row is solid floor of one color. row above is same
+    # color but with gaps, those are the parking spots. above that,
+    # floating solid rectangle blocks. each block drops into whichever
+    # gap matches its width or height, rotating 90 degrees if height is
+    # what matches instead of width. if gap count doesnt equal block
+    # count, or no valid pairing exists, rule fails. else stamp every
+    # block into its slot flush against the floor, clear the sky
+    def compute_gravity_into_slots(self, grid):
+
+        rows = len(grid)
+        cols = len(grid[0])
+ 
+        if rows < 3:
+            return None
+ 
+        # if bottom row isnt one solid nonzero color, rule doesnt apply,
+        # else thats our floor color
+        floor_color = grid[rows - 1][0]
+
+        if floor_color == 0:
+            return None
+
+        for c in range(cols):
+
+            if grid[rows - 1][c] != floor_color:
+                return None
+ 
+        # slot row is row above floor, should only have floor color and
+        # blank cells. if no gap or no post found, rule doesnt apply
+        slot_row = rows - 2
+        has_gap = False
+        has_post = False
+
+        for c in range(cols):
+
+            val = grid[slot_row][c]
+
+            if val == 0:
+                has_gap = True
+            elif val == floor_color:
+                has_post = True
+            else:
+                return None
+
+        if not has_gap or not has_post:
+            return None
+ 
+        # walk slot row, group consecutive blank cells into (start col,
+        # width) gap entries
+        gaps = []
+        c = 0
+
+        while c < cols:
+
+            if grid[slot_row][c] == 0:
+                start = c
+
+                while c < cols and grid[slot_row][c] == 0:
+
+                    c = c + 1
+
+                gaps.append((start, c - start))
+            else:
+                c = c + 1
+ 
+        # find floating blocks, any component not floor color, must sit
+        # fully above slot row. if a block doesnt fill its own bounding
+        # box, its not solid, rule doesnt apply
+        shapes = []
+        components = self.get_connected_components(grid)
+
+        for component in components:
+
+            if component['color'] == floor_color:
+                continue
+
+            if component['max_row'] >= slot_row:
+                return None
+
+            height = component['max_row'] - component['min_row'] + 1
+            width = component['max_col'] - component['min_col'] + 1
+
+            # if cell count doesnt equal height times width, not solid
+            if len(component['cells']) != height * width:
+                return None
+
+            shapes.append({'color': component['color'], 'height': height, 'width': width})
+ 
+        if len(shapes) == 0 or len(shapes) != len(gaps):
+            return None
+ 
+        # match each gap to an unused block where block width or height
+        # equals gap width, rotate if its the height that matches. try
+        # combos with small recursive backtrack, only a few blocks so no
+        # need for anything fancier
+        def assign(gap_index, used):
+
+            if gap_index == len(gaps):
+                return []
+
+            gap_width = gaps[gap_index][1]
+
+            for i in range(len(shapes)):
+
+                if i in used:
+                    continue
+
+                shape = shapes[i]
+
+                if shape['width'] == gap_width:
+                    drop_height = shape['height']
+                elif shape['height'] == gap_width:
+                    drop_height = shape['width']
+                else:
+                    continue
+
+                rest = assign(gap_index + 1, used + [i])
+
+                if rest is not None:
+                    return [(i, drop_height)] + rest
+
+            return None
+ 
+        assignment = assign(0, [])
+
+        if assignment is None:
+            return None
+ 
+        # blank whole grid, keep floor row and slot row as is, then for
+        # each gap stamp its matched block color in, sitting on floor
+        result = []
+
+        for r in range(rows):
+
+            result.append([0] * cols)
+
+        for c in range(cols):
+
+            result[rows - 1][c] = grid[rows - 1][c]
+            result[slot_row][c] = grid[slot_row][c]
+ 
+        for gap_index in range(len(gaps)):
+
+            gap_start, gap_width = gaps[gap_index]
+            shape_index, drop_height = assignment[gap_index]
+            color = shapes[shape_index]['color']
+            top_row = slot_row - drop_height + 1
+
+            if top_row < 0:
+                return None
+
+            for r in range(top_row, slot_row + 1):
+
+                for c in range(gap_start, gap_start + gap_width):
+
+                    result[r][c] = color
+ 
+        return np.array(result)
+ 
+    # wrapper function: run compute on every training input, if shape
+    # mismatch or result is none or doesnt equal training output, return
+    # none. else run compute on test input
+    def try_gravity_into_slots(self, training, test_input):
+
+        for pair in training:
+
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+ 
+            if in_grid.shape != out_grid.shape:
+                return None
+ 
+            expected = self.compute_gravity_into_slots(in_grid)
+
+            if expected is None:
+                return None
+
+            if not np.array_equal(expected, out_grid):
+                return None
+ 
+        return self.compute_gravity_into_slots(test_input)
+ 
+    # pattern: grid is split into panels by full separator lines, shapes
+    # come in mirror families. for each shape find nearest horizontal
+    # separator and nearest vertical separator using its center of mass.
+    # reflect shape over the horizontal line, over the vertical line, and
+    # over both at once, fill blanks only, never overwrite existing
+    # pixels. cells of same color in same panel count as one shape even
+    # if they only touch diagonally
+    def compute_mirror_across_grid_lines(self, grid):
+
+        rows = len(grid)
+        cols = len(grid[0])
+ 
+        row_lines, col_lines = self.find_grid_lines(grid)
+
+        if len(row_lines) == 0 or len(col_lines) == 0:
+            return None
+ 
+        separator_color = grid[row_lines[0]][0]
+ 
+        row_segments = self.get_panel_segments(rows, row_lines)
+        col_segments = self.get_panel_segments(cols, col_lines)
+ 
+        # given a position, find which panel segment it falls in, return
+        # -1 if none match
+        def segment_index(segments, position):
+
+            for i in range(len(segments)):
+
+                if segments[i][0] <= position < segments[i][1]:
+                    return i
+
+            return -1
+ 
+        # group every non separator pixel by panel row, panel col, and
+        # color, so a shape acts as one unit even touching only diagonal
+        groups = {}
+
+        for r in range(rows):
+
+            for c in range(cols):
+
+                val = grid[r][c]
+
+                if val == 0 or val == separator_color:
+                    continue
+
+                seg_r = segment_index(row_segments, r)
+                seg_c = segment_index(col_segments, c)
+
+                if seg_r == -1 or seg_c == -1:
+                    continue
+
+                key = (seg_r, seg_c, val)
+
+                if key not in groups:
+                    groups[key] = []
+
+                groups[key].append((r, c))
+ 
+        if len(groups) == 0:
+            return None
+ 
+        result = grid.copy()
+ 
+        for key in groups:
+
+            cells = groups[key]
+            color = key[2]
+ 
+            # find shape center of mass, use it to pick nearest separator
+            # on each axis, breaks ties when shape sits one cell from two
+            # lines at once
+            total_r = 0
+            total_c = 0
+
+            for cell in cells:
+
+                total_r = total_r + cell[0]
+                total_c = total_c + cell[1]
+
+            centroid_r = total_r / len(cells)
+            centroid_c = total_c / len(cells)
+ 
+            nearest_h = row_lines[0]
+
+            for line in row_lines:
+
+                if abs(line - centroid_r) < abs(nearest_h - centroid_r):
+                    nearest_h = line
+
+            nearest_v = col_lines[0]
+
+            for line in col_lines:
+
+                if abs(line - centroid_c) < abs(nearest_v - centroid_c):
+                    nearest_v = line
+ 
+            # build three mirror targets: flip over horizontal line, flip
+            # over vertical line, flip over both at once
+            for cell in cells:
+
+                cell_r = cell[0]
+                cell_c = cell[1]
+                mirrors = [
+                    (2 * nearest_h - cell_r, cell_c),
+                    (cell_r, 2 * nearest_v - cell_c),
+                    (2 * nearest_h - cell_r, 2 * nearest_v - cell_c),
+                ]
+
+                for mr, mc in mirrors:
+
+                    if mr < 0 or mr >= rows or mc < 0 or mc >= cols:
+                        continue
+
+                    # if target cell still blank paint it, else skip it
+                    if result[mr][mc] == 0:
+                        result[mr][mc] = color
+ 
+        return result
+ 
+    # wrapper function: run compute on every training input, if shape
+    # mismatch or result is none or doesnt match output, return none.
+    # else run compute on test input
+    def try_mirror_across_grid_lines(self, training, test_input):
+
+        for pair in training:
+
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+ 
+            if in_grid.shape != out_grid.shape:
+                return None
+ 
+            expected = self.compute_mirror_across_grid_lines(in_grid)
+
+            if expected is None:
+                return None
+
+            if not np.array_equal(expected, out_grid):
+                return None
+ 
+        return self.compute_mirror_across_grid_lines(test_input)
+ 
+    # pattern: grid has a big bordered box with a pattern inside, plus
+    # small 2 pixel legend pairs scattered outside it. each legend pair
+    # is two different colors side by side, right pixel is old color,
+    # left pixel is new color. crop the box out, if a pixel color is in
+    # the legend map replace with mapped color, else leave it as is
+    def compute_legend_recolor_crop(self, grid):
+
+        components = self.get_connected_components(grid)
+
+        if len(components) == 0:
+            return None
+ 
+        # box is whichever connected blob has the most pixels
+        box = components[0]
+
+        for component in components:
+
+            if len(component['cells']) > len(box['cells']):
+                box = component
+ 
+        min_row = box['min_row']
+        max_row = box['max_row']
+        min_col = box['min_col']
+        max_col = box['max_col']
+ 
+        rows = len(grid)
+        cols = len(grid[0])
+ 
+        # scan grid for legend pairs, two different nonzero colors side
+        # by side, both cells fully outside box bounding box. map right
+        # pixel color to left pixel color
+        mapping = {}
+
+        for r in range(rows):
+
+            for c in range(cols - 1):
+
+                left_val = grid[r][c]
+                right_val = grid[r][c + 1]
+
+                if left_val == 0 or right_val == 0:
+                    continue
+
+                if left_val == right_val:
+                    continue
+
+                inside_left = min_row <= r <= max_row and min_col <= c <= max_col
+                inside_right = min_row <= r <= max_row and min_col <= c + 1 <= max_col
+
+                if inside_left or inside_right:
+                    continue
+
+                # if two legend entries map same old color to different
+                # new colors, we misread it, exit out
+                if right_val in mapping and mapping[right_val] != left_val:
+                    return None
+
+                mapping[right_val] = left_val
+ 
+        if len(mapping) == 0:
+            return None
+ 
+        # crop box out, for each pixel if color is in legend map replace
+        # it, else leave as is, border color usually just passes through
+        result = []
+
+        for r in range(min_row, max_row + 1):
+
+            result_row = []
+
+            for c in range(min_col, max_col + 1):
+
+                val = grid[r][c]
+
+                if val in mapping:
+                    result_row.append(mapping[val])
+                else:
+                    result_row.append(val)
+
+            result.append(result_row)
+ 
+        return np.array(result)
+ 
+    # wrapper function: run compute on every training input, if result is
+    # none or shape or values dont match training output, return none.
+    # else run compute on test input
+    def try_legend_recolor_crop(self, training, test_input):
+
+        for pair in training:
+
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+ 
+            expected = self.compute_legend_recolor_crop(in_grid)
+
+            if expected is None:
+                return None
+
+            if expected.shape != out_grid.shape:
+                return None
+
+            if not np.array_equal(expected, out_grid):
+                return None
+ 
+        return self.compute_legend_recolor_crop(test_input)
+
+
+     # pattern: grid has two lone pixels, a mover and an anchor. mover
+    # takes exactly one step toward anchor, diagonal steps allowed. if
+    # anchor row is bigger step down, if smaller step up, if equal no row
+    # step, same check for col. blank old mover position, paint new one.
+    # which color is the mover isnt known ahead of time, figured out in
+    # the wrapper function below
+    def compute_step_toward(self, grid, mover_color):
+
+        rows = len(grid)
+        cols = len(grid[0])
+ 
+        # scan grid, save mover position and anchor position. if more
+        # than one of either color shows up, rule doesnt apply
+        mover_pos = None
+        anchor_pos = None
+
+        for r in range(rows):
+
+            for c in range(cols):
+
+                val = grid[r][c]
+
+                if val == 0:
+                    continue
+
+                if val == mover_color:
+                    if mover_pos is not None:
+                        return None
+
+                    mover_pos = (r, c)
+                else:
+                    if anchor_pos is not None:
+                        return None
+
+                    anchor_pos = (r, c)
+ 
+        if mover_pos is None or anchor_pos is None:
+            return None
+ 
+        # step direction is just the sign of row gap and col gap
+        step_r = 0
+
+        if anchor_pos[0] > mover_pos[0]:
+            step_r = 1
+        elif anchor_pos[0] < mover_pos[0]:
+            step_r = -1
+
+        step_c = 0
+
+        if anchor_pos[1] > mover_pos[1]:
+            step_c = 1
+        elif anchor_pos[1] < mover_pos[1]:
+            step_c = -1
+ 
+        result = grid.copy()
+        result[mover_pos[0]][mover_pos[1]] = 0
+        result[mover_pos[0] + step_r][mover_pos[1] + step_c] = mover_color
+        return result
+ 
+    # wrapper function: mover color isnt known ahead of time. collect
+    # every color from first training input as a candidate. for each
+    # candidate run compute on every training pair, if all pairs match
+    # use that color and run compute on test input. if no candidate works
+    # for every pair, return none
+    def try_step_toward(self, training, test_input):
+
+        if len(training) == 0:
+            return None
+ 
+        # collect candidate colors from first training input
+        first_in = training[0].get_input_data().data()
+        candidates = []
+
+        for r in range(len(first_in)):
+
+            for c in range(len(first_in[0])):
+
+                val = first_in[r][c]
+
+                if val != 0 and val not in candidates:
+                    candidates.append(val)
+ 
+        for mover_color in candidates:
+
+            all_match = True
+
+            for pair in training:
+
+                in_grid = pair.get_input_data().data()
+                out_grid = pair.get_output_data().data()
+
+                if in_grid.shape != out_grid.shape:
+                    return None
+
+                expected = self.compute_step_toward(in_grid, mover_color)
+
+                if expected is None or not np.array_equal(expected, out_grid):
+                    all_match = False
+                    break
+
+            if all_match:
+                return self.compute_step_toward(test_input, mover_color)
+ 
+        return None
+ 
+    # pattern: input is a totally blank grid, output is a clockwise
+    # spiral of 3s. start top left heading right, paint current cell,
+    # then check if next cell in current direction is blocked, off grid,
+    # already painted, or the cell after that is painted. if blocked turn
+    # clockwise once and check again, if still blocked spiral is done,
+    # else step forward and paint
+    def compute_spiral_fill(self, grid):
+
+        rows = len(grid)
+        cols = len(grid[0])
+ 
+        # if any cell is not blank, rule doesnt apply
+        for r in range(rows):
+
+            for c in range(cols):
+
+                if grid[r][c] != 0:
+                    return None
+ 
+        result = []
+
+        for r in range(rows):
+
+            result.append([0] * cols)
+ 
+        # direction order for turning clockwise: right, down, left, up
+        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+ 
+        # check if step from (r, c) in direction d is allowed. blocked if
+        # next cell is off grid or already painted, or if cell one
+        # further ahead is painted, that lookahead keeps a gap between arms
+        def can_step(r, c, d):
+
+            nr = r + directions[d][0]
+            nc = c + directions[d][1]
+
+            if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
+                return False
+
+            if result[nr][nc] != 0:
+                return False
+
+            ar = nr + directions[d][0]
+            ac = nc + directions[d][1]
+
+            if 0 <= ar < rows and 0 <= ac < cols and result[ar][ac] != 0:
+                return False
+
+            return True
+ 
+        cur_r = 0
+        cur_c = 0
+        d = 0
+        result[cur_r][cur_c] = 3
+ 
+        # if can step forward keep going straight. if not, turn clockwise
+        # once and try again. if that is blocked too, spiral is fully
+        # coiled, stop
+        while True:
+
+            if can_step(cur_r, cur_c, d):
+                pass
+            elif can_step(cur_r, cur_c, (d + 1) % 4):
+                d = (d + 1) % 4
+            else:
+                break
+
+            cur_r = cur_r + directions[d][0]
+            cur_c = cur_c + directions[d][1]
+            result[cur_r][cur_c] = 3
+ 
+        return np.array(result)
+ 
+    # wrapper function: run compute on every training input, if shape or
+    # values dont match training output, return none. else run compute
+    # on test input
+    def try_spiral_fill(self, training, test_input):
+
+        for pair in training:
+
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+
+            if in_grid.shape != out_grid.shape:
+                return None
+
+            expected = self.compute_spiral_fill(in_grid)
+
+            if expected is None:
+                return None
+
+            if not np.array_equal(expected, out_grid):
+                return None
+
+        return self.compute_spiral_fill(test_input)
+ 
+    # pattern: grid is a maze of colored walls. run flood fill from every
+    # blank cell on the border, walls block the fill. if a blank cell is
+    # reached by the fill its outside, paint it 3. if a blank cell is
+    # never reached its trapped, paint it 2. wall cells stay unchanged
+    def compute_inside_outside_paint(self, grid):
+
+        rows = len(grid)
+        cols = len(grid[0])
+ 
+        reachable = self.find_border_reachable_background(grid, 0)
+ 
+        result = grid.copy()
+
+        for r in range(rows):
+
+            for c in range(cols):
+
+                if grid[r][c] != 0:
+                    continue
+
+                if reachable[r][c]:
+                    result[r][c] = 3
+                else:
+                    result[r][c] = 2
+ 
+        return result
+ 
+    # wrapper function: run compute on every training input, if shape or
+    # values dont match training output, return none. else run compute
+    # on test input
+    def try_inside_outside_paint(self, training, test_input):
+
+        for pair in training:
+
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+
+            if in_grid.shape != out_grid.shape:
+                return None
+
+            expected = self.compute_inside_outside_paint(in_grid)
+
+            if not np.array_equal(expected, out_grid):
+                return None
+
+        return self.compute_inside_outside_paint(test_input)
+ 
+    # pattern: grid framed by four solid borders, each its own color,
+    # corners blank. interior has scattered pixels. for each interior
+    # pixel check if its color matches top, bottom, left, or right border
+    # color. if it matches exactly one, move it next to that border,
+    # keeping its row for left/right match or its col for top/bottom
+    # match. if it matches more than one border, exit. if it matches
+    # none, pixel is deleted. read the four border colors off the edges,
+    # sanity check the frame, then re home or trash every
+    # interior pixel one by one
+    def compute_fly_to_border(self, grid):
+
+        rows = len(grid)
+        cols = len(grid[0])
+ 
+        if rows < 4 or cols < 4:
+            return None
+ 
+        # read the four border colors, then check each border is one
+        # solid nonzero color all the way across, skip the corners
+        top_color = grid[0][1]
+        bottom_color = grid[rows - 1][1]
+        left_color = grid[1][0]
+        right_color = grid[1][cols - 1]
+
+        if top_color == 0 or bottom_color == 0 or left_color == 0 or right_color == 0:
+            return None
+
+        for c in range(1, cols - 1):
+
+            if grid[0][c] != top_color or grid[rows - 1][c] != bottom_color:
+                return None
+
+        for r in range(1, rows - 1):
+
+            if grid[r][0] != left_color or grid[r][cols - 1] != right_color:
+                return None
+ 
+        # blank whole grid first, then copy the frame back in unchanged
+        result = []
+
+        for r in range(rows):
+
+            result.append([0] * cols)
+
+        for c in range(cols):
+
+            result[0][c] = grid[0][c]
+            result[rows - 1][c] = grid[rows - 1][c]
+
+        for r in range(rows):
+
+            result[r][0] = grid[r][0]
+            result[r][cols - 1] = grid[r][cols - 1]
+ 
+        # walk every interior cell, send its pixel to matching border if
+        # one exists
+        for r in range(1, rows - 1):
+
+            for c in range(1, cols - 1):
+
+                val = grid[r][c]
+
+                if val == 0:
+                    continue
+ 
+                # check which border colors this pixel matches. if it
+                # matches more than one border its ambiguous, exit
+                # instead of guessing
+                matches = []
+
+                if val == left_color:
+                    matches.append((r, 1))
+
+                if val == right_color:
+                    matches.append((r, cols - 2))
+
+                if val == top_color:
+                    matches.append((1, c))
+
+                if val == bottom_color:
+                    matches.append((rows - 2, c))
+ 
+                if len(matches) > 1:
+                    return None
+
+                if len(matches) == 0:
+                    # if color matches no border, pixel just disappears
+                    continue
+ 
+                target_r, target_c = matches[0]
+                result[target_r][target_c] = val
+ 
+        return np.array(result)
+ 
+    # wrapper function: run compute on every training input, if shape or
+    # values dont match training output, return none. else run compute
+    # on test input
+    def try_fly_to_border(self, training, test_input):
+
+        for pair in training:
+
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+
+            if in_grid.shape != out_grid.shape:
+                return None
+
+            expected = self.compute_fly_to_border(in_grid)
+
+            if expected is None:
+                return None
+
+            if not np.array_equal(expected, out_grid):
+                return None
+
+        return self.compute_fly_to_border(test_input)
+ 
+    # pattern: frame of one color holds shapes of another color inside
+    # it. frame color is whichever color forms the longest straight line
+    # in any row or col. frame always has two parallel walls, either two
+    # rows or two cols. each shape reflects across whichever wall its
+    # center of mass sits closest to, ending up mirrored outside the
+    # frame, old position cleared. if mirrored cell lands off grid, rule
+    # fails
+    def compute_escape_through_wall(self, grid):
+
+        rows = len(grid)
+        cols = len(grid[0])
+ 
+        # collect the two nonzero colors, frame color is whichever forms
+        # the longest straight line in a single row or col
+        colors = []
+
+        for r in range(rows):
+
+            for c in range(cols):
+
+                val = grid[r][c]
+
+                if val != 0 and val not in colors:
+                    colors.append(val)
+
+        if len(colors) != 2:
+            return None
+ 
+        def max_line_count(color):
+
+            best = 0
+
+            for r in range(rows):
+
+                count = 0
+
+                for c in range(cols):
+
+                    if grid[r][c] == color:
+                        count = count + 1
+
+                if count > best:
+                    best = count
+
+            for c in range(cols):
+
+                count = 0
+
+                for r in range(rows):
+
+                    if grid[r][c] == color:
+                        count = count + 1
+
+                if count > best:
+                    best = count
+
+            return best
+ 
+        if max_line_count(colors[0]) >= max_line_count(colors[1]):
+            frame_color = colors[0]
+            shape_color = colors[1]
+        else:
+            frame_color = colors[1]
+            shape_color = colors[0]
+ 
+        # count frame pixels per row and per col, the two walls sit on
+        # whichever axis has the highest count
+        row_counts = []
+
+        for r in range(rows):
+
+            count = 0
+
+            for c in range(cols):
+
+                if grid[r][c] == frame_color:
+                    count = count + 1
+
+            row_counts.append(count)
+
+        col_counts = []
+
+        for c in range(cols):
+
+            count = 0
+
+            for r in range(rows):
+
+                if grid[r][c] == frame_color:
+                    count = count + 1
+
+            col_counts.append(count)
+ 
+        best_row = max(row_counts)
+        best_col = max(col_counts)
+ 
+        if best_row >= best_col:
+            # if row count wins, walls are the rows holding max count
+            walls = []
+
+            for r in range(rows):
+
+                if row_counts[r] == best_row:
+                    walls.append(r)
+
+            horizontal = True
+        else:
+            walls = []
+
+            for c in range(cols):
+
+                if col_counts[c] == best_col:
+                    walls.append(c)
+
+            horizontal = False
+ 
+        # need exactly two parallel walls to bounce off of
+        if len(walls) != 2:
+            return None
+ 
+        # clear all shape pixels first, then for each shape stamp it
+        # back in mirrored across its nearest wall
+        result = grid.copy()
+
+        for r in range(rows):
+
+            for c in range(cols):
+
+                if grid[r][c] == shape_color:
+                    result[r][c] = 0
+ 
+        components = self.get_connected_components(grid)
+
+        for component in components:
+
+            if component['color'] != shape_color:
+                continue
+ 
+            # center of mass along bounce axis decides which wall is nearer
+            total = 0
+
+            for cell in component['cells']:
+
+                if horizontal:
+                    total = total + cell[0]
+                else:
+                    total = total + cell[1]
+
+            centroid = total / len(component['cells'])
+ 
+            wall = walls[0]
+
+            if abs(walls[1] - centroid) < abs(wall - centroid):
+                wall = walls[1]
+ 
+            # reflect every cell of shape across chosen wall, if mirrored
+            # cell is off grid, exit
+            for cell in component['cells']:
+
+                if horizontal:
+                    mirror_r = 2 * wall - cell[0]
+                    mirror_c = cell[1]
+                else:
+                    mirror_r = cell[0]
+                    mirror_c = 2 * wall - cell[1]
+
+                if mirror_r < 0 or mirror_r >= rows or mirror_c < 0 or mirror_c >= cols:
+                    return None
+
+                result[mirror_r][mirror_c] = shape_color
+ 
+        return result
+ 
+    # wrapper function: run compute on every training input, if shape
+    # mismatch or result is none or doesnt match output, return none.
+    # else run compute on test input
+    def try_escape_through_wall(self, training, test_input):
+
+        for pair in training:
+
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+
+            if in_grid.shape != out_grid.shape:
+                return None
+
+            expected = self.compute_escape_through_wall(in_grid)
+
+            if expected is None:
+                return None
+
+            if not np.array_equal(expected, out_grid):
+                return None
+
+        return self.compute_escape_through_wall(test_input)
+ 
+    # pattern: grid has a handful of lone pixels in exactly two colors.
+    # each dot grows a 3x3 ring around itself in the other color, own
+    # color stays center. if two dots share a row, link them with dotted
+    # 5s in the gap, skip two cells next to each dot for ring space, a
+    # gap cell gets a 5 if its distance to nearest dot is even. same rule
+    # for dots sharing a col
+    def compute_ring_dots_and_links(self, grid):
+
+        rows = len(grid)
+        cols = len(grid[0])
+ 
+        # collect every nonzero pixel as a dot. if not exactly two
+        # distinct colors, or fewer than two dots, rule doesnt apply
+        dots = []
+        colors = []
+
+        for r in range(rows):
+
+            for c in range(cols):
+
+                val = grid[r][c]
+
+                if val == 0:
+                    continue
+
+                dots.append((r, c, val))
+
+                if val not in colors:
+                    colors.append(val)
+ 
+        if len(colors) != 2 or len(dots) < 2:
+            return None
+ 
+        result = []
+
+        for r in range(rows):
+
+            result.append([0] * cols)
+ 
+        # for each dot paint 3x3 ring in the other color, keep own color
+        # in center cell, clip to grid edges
+        for dot_r, dot_c, dot_color in dots:
+
+            if dot_color == colors[0]:
+                ring_color = colors[1]
+            else:
+                ring_color = colors[0]
+
+            for dr in range(-1, 2):
+
+                for dc in range(-1, 2):
+
+                    rr = dot_r + dr
+                    cc = dot_c + dc
+
+                    if rr < 0 or rr >= rows or cc < 0 or cc >= cols:
+                        continue
+
+                    if dr == 0 and dc == 0:
+                        result[rr][cc] = dot_color
+                    else:
+                        result[rr][cc] = ring_color
+ 
+        # for every pair of dots on same row or col, skip two cells next
+        # to each dot for ring space, then paint 5 where distance to
+        # nearest dot is even
+        for i in range(len(dots)):
+
+            for j in range(i + 1, len(dots)):
+
+                r1, c1, _ = dots[i]
+                r2, c2, _ = dots[j]
+ 
+                if r1 == r2:
+                    lo = min(c1, c2)
+                    hi = max(c1, c2)
+
+                    for c in range(lo + 2, hi - 1):
+
+                        nearest_dot_dist = min(c - lo, hi - c)
+
+                        if nearest_dot_dist % 2 == 0:
+                            result[r1][c] = 5
+                elif c1 == c2:
+                    lo = min(r1, r2)
+                    hi = max(r1, r2)
+
+                    for r in range(lo + 2, hi - 1):
+
+                        nearest_dot_dist = min(r - lo, hi - r)
+
+                        if nearest_dot_dist % 2 == 0:
+                            result[r][c1] = 5
+ 
+        return np.array(result)
+ 
+    # wrapper function: run compute on every training input, if shape
+    # mismatch or result is none or doesnt match output, return none.
+    # else run compute on test input
+    def try_ring_dots_and_links(self, training, test_input):
+
+        for pair in training:
+
+            in_grid = pair.get_input_data().data()
+            out_grid = pair.get_output_data().data()
+
+            if in_grid.shape != out_grid.shape:
+                return None
+
+            expected = self.compute_ring_dots_and_links(in_grid)
+
+            if expected is None:
+                return None
+
+            if not np.array_equal(expected, out_grid):
+                return None
+
+        return self.compute_ring_dots_and_links(test_input)
+ 
+
 
 
 
@@ -2309,7 +3677,7 @@ class ArcAgent:
         Also, if you return more than 3 predictions in the list it
         is considered an ERROR and the test will be automatically
         marked as INCORRECT.
-        """
+        """ 
                 
         predictions = []
         training = arc_problem.training_set()
@@ -2321,7 +3689,7 @@ class ArcAgent:
                 predictions.append(transform(test_input))
                 return predictions
 
-        # parameterized transforms — each returns result or None
+
         transform_attempts = [
             self.try_color_substitution_and_apply(training, test_input),
             self.try_x_pattern(training, test_input),
@@ -2344,6 +3712,18 @@ class ArcAgent:
             self.try_crop_shape_recolor_by_marker(training, test_input),
             self.try_marker_ray_cast(training, test_input),
             self.try_two_block_diagonal_trails(training, test_input),
+            self.try_mirror_tile_3x3(training, test_input),
+            self.try_point_to_point_path(training, test_input),
+            self.try_diamond_wave(training, test_input),
+            self.try_gravity_into_slots(training, test_input),
+            self.try_mirror_across_grid_lines(training, test_input),
+            self.try_legend_recolor_crop(training, test_input),
+            self.try_step_toward(training, test_input),
+            self.try_spiral_fill(training, test_input),
+            self.try_inside_outside_paint(training, test_input),
+            self.try_fly_to_border(training, test_input),
+            self.try_escape_through_wall(training, test_input),
+            self.try_ring_dots_and_links(training, test_input),
             self.try_bounding_box(test_input),
         ]
 
